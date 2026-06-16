@@ -861,8 +861,11 @@ server <- function(input, output, session) {
         icon = icon("upload")
       ),
 
-      # アクティブ / リファレンス データセット選択（読み込み後に表示）
-      uiOutput("dataset_selectors_ui"),
+      # アクティブ / リファレンス データセット選択（spatial 以外のタブで表示）
+      conditionalPanel(
+        "input.main_tabs != 'spatial'",
+        uiOutput("dataset_selectors_ui")
+      ),
 
       hr(),
 
