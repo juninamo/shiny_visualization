@@ -67,15 +67,15 @@ feature immediately.
 
 ```r
 install.packages(c("shiny", "bslib", "ggplot2", "DT", "ggrepel",
-                   "pheatmap", "ggh4x", "plotly", "patchwork", "gridExtra"))
+                   "ggh4x", "plotly", "patchwork"))
 # Seurat (and its dependency Matrix):
 install.packages("Seurat")
 ```
 
-`pheatmap` is required for the Heatmap tab; `ggh4x` enables nested facets in the
-Composition tab (falls back to `facet_grid` if absent); `plotly` powers the
-interactive volcano (falls back to a static plot); `patchwork`/`gridExtra` are
-used to lay out the side-by-side reference comparison.
+`ggh4x` enables nested facets in the Composition tab (falls back to `facet_grid`
+if absent); `plotly` powers the interactive volcano / composition / dot plots
+(falls back to static plots); `patchwork` lays out some side-by-side panels. The
+Heatmap is drawn with plain `ggplot2` (no `pheatmap` needed).
 
 ---
 

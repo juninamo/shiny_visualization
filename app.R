@@ -1831,9 +1831,6 @@ server <- function(input, output, session) {
     if (length(col_types$cat) == 0) {
       return(div(class = "text-center text-muted py-4", h5(t("comp_no_cat"))))
     }
-    if (!requireNamespace("pheatmap", quietly = TRUE)) {
-      return(div(class = "text-center text-warning py-4", h5(t("hm_pkg_missing"))))
-    }
 
     extra <- fluidRow(
       column(4,
@@ -1885,33 +1882,49 @@ server <- function(input, output, session) {
     mat
   }
 
-  # pheatmap の gtable を返す（行=クラスター, 列=遺伝子, 遺伝子名を垂直ラベル）
-  hm_grob <- function(mat, main, cluster_rows, cluster_cols) {
-    pheatmap::pheatmap(
-      mat = base::t(mat),
-      color = grDevices::colorRampPalette(c("#0072B5FF", "white", "#BC3C29FF"))(50),
-      border_color = "white",
-      show_rownames = TRUE, show_colnames = TRUE,
-      cluster_rows = cluster_rows, cluster_cols = cluster_cols,
-      treeheight_row = 0, treeheight_col = 0,
-      angle_col = 90, fontsize = 11, scale = "none",
-      main = main, silent = TRUE
-    )$gtable
-  }
-
-  # grob を renderPlot で確実にブラウザ側デバイスへ描く。
-  # ggplotify があれば ggplot 化して return（最も確実）。無ければ grid.draw。
-  draw_grob <- function(g) {
-    if (requireNamespace("ggplotify", quietly = TRUE)) {
-      ggplotify::as.ggplot(g)
-    } else {
-      grid::grid.newpage(); grid::grid.draw(g); NULL
+  # 純 ggplot(geom_tile) でヒートマップを構築。
+  # pheatmap は grid に直接描画してしまい（RStudio のプロットペインに出る等）
+  # Shiny のデバイス制御と相性が悪いため、ggplot で描く。
+  # mat: genes x clusters（Z-score 済み）。行=クラスター, 列=遺伝子 で表示。
+  build_hm_ggplot <- function(mat, main, cluster_rows, cluster_cols) {
+    pt <- plot_theme()
+    m <- base::t(mat)                      # clusters x genes
+    row_order <- rownames(m)               # clusters
+    col_order <- colnames(m)               # genes
+    if (isTRUE(cluster_rows) && nrow(m) > 2) {
+      row_order <- rownames(m)[stats::hclust(stats::dist(m))$order]
     }
+    if (isTRUE(cluster_cols) && ncol(m) > 2) {
+      col_order <- colnames(m)[stats::hclust(stats::dist(base::t(m)))$order]
+    }
+    df <- data.frame(
+      cluster = factor(rep(rownames(m), times = ncol(m)), levels = row_order),
+      gene    = factor(rep(colnames(m), each = nrow(m)),  levels = col_order),
+      value   = as.vector(m),
+      stringsAsFactors = FALSE
+    )
+    lim <- max(abs(df$value), na.rm = TRUE)
+    ggplot(df, aes(x = gene, y = cluster, fill = value)) +
+      geom_tile(color = "white", linewidth = 0.3) +
+      scale_fill_gradient2(low = "#0072B5FF", mid = "white", high = "#BC3C29FF",
+                           midpoint = 0, limits = c(-lim, lim), name = NULL) +
+      labs(title = main, x = NULL, y = NULL) +
+      theme_minimal(base_size = 11) +
+      theme(
+        axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5, size = 9),
+        axis.text.y = element_text(size = 9),
+        panel.grid = element_blank(),
+        plot.background = element_rect(fill = pt$bg, color = NA),
+        panel.background = element_rect(fill = pt$bg, color = NA),
+        text = element_text(color = pt$fg),
+        axis.text = element_text(color = pt$fg2),
+        legend.text = element_text(color = pt$fg),
+        plot.title = element_text(size = 14, face = "bold", color = pt$accent)
+      )
   }
 
   heatmap_spec <- eventReactive(input$hm_run, {
-    req(seurat_obj(), input$hm_cluster,
-        requireNamespace("pheatmap", quietly = TRUE))
+    req(seurat_obj(), input$hm_cluster)
     ma <- build_hm_mat(seurat_obj())
     validate(need(!is.null(ma) && nrow(ma) > 0, t("hm_no_genes")))
     rb <- ref_obj()
@@ -1928,20 +1941,18 @@ server <- function(input, output, session) {
 
   output$heatmap_plot <- renderPlot({
     spec <- heatmap_spec()
-    g <- hm_grob(spec$active, spec$names[1], spec$cluster_rows, spec$cluster_cols)
-    draw_grob(g)
-  }, bg = "white")
+    build_hm_ggplot(spec$active, spec$names[1], spec$cluster_rows, spec$cluster_cols)
+  }, bg = "transparent")
 
   output$heatmap_plot_ref <- renderPlot({
     spec <- heatmap_spec()
     req(spec$ref_present)
-    g <- if (is.null(spec$ref)) {
-      grid::textGrob(t("ref_missing"), gp = grid::gpar(col = "grey50"))
+    if (is.null(spec$ref)) {
+      empty_panel(t("ref_missing"))
     } else {
-      hm_grob(spec$ref, spec$names[2], spec$cluster_rows, spec$cluster_cols)
+      build_hm_ggplot(spec$ref, spec$names[2], spec$cluster_rows, spec$cluster_cols)
     }
-    draw_grob(g)
-  }, bg = "white")
+  }, bg = "transparent")
 
   # ==========================================================================
   # Dot plot
