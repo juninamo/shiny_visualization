@@ -260,6 +260,13 @@ i18n <- list(
     deg_group1        = "Group 1 (テスト群)",
     deg_group2        = "Group 2 (コントロール群・複数選択可)",
     deg_all_others    = "その他全て (All others)",
+    deg_feature_mode  = "解析する遺伝子",
+    deg_feat_all      = "全遺伝子",
+    deg_feat_set      = "マーカーセット",
+    deg_feat_set_custom = "セット + 自分で選択",
+    deg_feat_custom   = "自分で選択のみ",
+    deg_marker_set    = "マーカーセット",
+    deg_custom_genes  = "遺伝子を選択",
     deg_logfc         = "logFC閾値",
     deg_pval          = "p値閾値",
     deg_run           = "DEG解析を実行",
@@ -302,6 +309,7 @@ i18n <- list(
     notify_error        = "エラー: ",
     notify_deg_running  = "DEG解析を実行中...",
     notify_deg_same     = "Group 1とGroup 2は異なるグループを選択してください。",
+    notify_deg_no_features = "解析対象の遺伝子が選択されていません。",
     notify_deg_done     = "✅ DEG解析完了: %d Up, %d Down",
 
     # プレースホルダ
@@ -335,6 +343,13 @@ i18n <- list(
     deg_group1        = "Group 1 (Test)",
     deg_group2        = "Group 2 (Control, multi-select)",
     deg_all_others    = "All others",
+    deg_feature_mode  = "Genes to test",
+    deg_feat_all      = "All genes",
+    deg_feat_set      = "Marker set",
+    deg_feat_set_custom = "Set + custom",
+    deg_feat_custom   = "Custom only",
+    deg_marker_set    = "Marker Set",
+    deg_custom_genes  = "Select genes",
     deg_logfc         = "logFC Threshold",
     deg_pval          = "p-value Threshold",
     deg_run           = "Run DEG Analysis",
@@ -377,6 +392,7 @@ i18n <- list(
     notify_error        = "Error: ",
     notify_deg_running  = "Running DEG analysis...",
     notify_deg_same     = "Group 1 and Group 2 must be different.",
+    notify_deg_no_features = "No genes are selected for analysis.",
     notify_deg_done     = "✅ DEG complete: %d Up, %d Down",
 
     # Placeholders
@@ -803,6 +819,10 @@ server <- function(input, output, session) {
       }
     }
 
+    # 解析対象遺伝子の候補（自分で選ぶ用）
+    deg_gene_choices <- if (data_loaded()) sort(rownames(seurat_obj())) else character(0)
+    feat_mode_sel <- isolate(input$deg_feature_mode) %||% "all"
+
     tagList(
       # DEG設定パネル
       div(
@@ -819,6 +839,44 @@ server <- function(input, output, session) {
           ),
           # カテゴリカル/数値で動的に切り替わるUI
           uiOutput("deg_group_settings_ui"),
+
+          # 解析する遺伝子: 全 / セット / セット+カスタム / カスタムのみ
+          fluidRow(
+            column(12,
+              radioButtons("deg_feature_mode", t("deg_feature_mode"),
+                choices = c(
+                  setNames("all",        t("deg_feat_all")),
+                  setNames("set",        t("deg_feat_set")),
+                  setNames("set_custom", t("deg_feat_set_custom")),
+                  setNames("custom",     t("deg_feat_custom"))
+                ),
+                selected = feat_mode_sel, inline = TRUE)
+            )
+          ),
+          conditionalPanel(
+            "input.deg_feature_mode == 'set' || input.deg_feature_mode == 'set_custom'",
+            fluidRow(
+              column(12,
+                selectInput("deg_marker_set", t("deg_marker_set"),
+                            choices = names(marker_sets),
+                            selected = isolate(input$deg_marker_set) %||% names(marker_sets)[1])
+              )
+            )
+          ),
+          conditionalPanel(
+            "input.deg_feature_mode == 'custom' || input.deg_feature_mode == 'set_custom'",
+            fluidRow(
+              column(12,
+                selectizeInput("deg_custom_genes", t("deg_custom_genes"),
+                               choices = deg_gene_choices,
+                               selected = isolate(input$deg_custom_genes),
+                               multiple = TRUE,
+                               options = list(placeholder = t("gene_placeholder"),
+                                              maxOptions = 1000))
+              )
+            )
+          ),
+
           fluidRow(
             column(4,
               numericInput("deg_logfc", t("deg_logfc"), value = 0.25, min = 0, step = 0.1)
@@ -847,6 +905,20 @@ server <- function(input, output, session) {
     req(input$deg_group_var)
     col_types <- meta_col_types()
     input$deg_group_var %in% col_types$num
+  })
+
+  # --- DEGで解析する遺伝子（NULL = 全遺伝子） ---
+  deg_features <- reactive({
+    mode <- input$deg_feature_mode %||% "all"
+    if (mode == "all") return(NULL)
+    obj <- seurat_obj()
+    req(obj)
+    set_genes <- character(0)
+    if (mode %in% c("set", "set_custom") && !is.null(input$deg_marker_set)) {
+      set_genes <- unique(marker_set_to_df(marker_sets[[input$deg_marker_set]])$feature)
+    }
+    custom <- if (mode %in% c("custom", "set_custom")) input$deg_custom_genes else character(0)
+    intersect(unique(c(set_genes, custom)), rownames(obj))
   })
 
   # --- DEGグループ設定UI（カテゴリ/数値で切替） ---
@@ -1507,6 +1579,14 @@ server <- function(input, output, session) {
     tryCatch({
       obj <- seurat_obj()
 
+      # 解析対象遺伝子（NULL = 全遺伝子）。限定時は min.pct=0 で選択遺伝子を確実に表示
+      features <- deg_features()
+      if (!is.null(features) && length(features) == 0) {
+        showNotification(t("notify_deg_no_features"), type = "error", id = "deg_run")
+        return()
+      }
+      deg_min_pct <- if (is.null(features)) 0.1 else 0
+
       if (deg_var_is_numeric()) {
         # --- 数値列: Top X% vs Bottom X% ---
         req(input$deg_percentile)
@@ -1530,8 +1610,9 @@ server <- function(input, output, session) {
         markers <- FindMarkers(obj,
                                ident.1 = ident1_label,
                                ident.2 = ident2_label,
+                               features = features,
                                logfc.threshold = 0,
-                               min.pct = 0.1)
+                               min.pct = deg_min_pct)
       } else {
         # --- カテゴリカル列 ---
         req(input$deg_ident1, input$deg_ident2)
@@ -1558,8 +1639,9 @@ server <- function(input, output, session) {
         markers <- FindMarkers(obj,
                                ident.1 = input$deg_ident1,
                                ident.2 = ident2_val,
+                               features = features,
                                logfc.threshold = 0,
-                               min.pct = 0.1)
+                               min.pct = deg_min_pct)
       }
 
       markers$gene <- rownames(markers)
