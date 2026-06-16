@@ -33,7 +33,10 @@ feature immediately.
 - **Pre-registered marker sets** — curated panels (`Cell type`, `T cell`, `B cell`,
   `Myeloid`, `NK / ILC`, `Stromal / Tissue`, `All curated`) drive the Heatmap and
   Dot Plot tabs. On the Heatmap/Dot Plot/DEG tabs you can use a *set*, a
-  *set + your own genes*, or *only your own genes*.
+  *set + your own genes*, or *only your own genes*, and prune individual genes
+  out of a set. The **Heatmap and Dot Plot share one set of gene/cluster
+  controls** (shown in the sidebar on those tabs), so you configure them once and
+  both plots match.
 - **Run on demand** — Composition, Heatmap, and Dot Plot render only when you
   click their **Plot** button (they don't recompute on every option change).
 - **Interactive plots** — hover to inspect: a DEG volcano point shows the gene

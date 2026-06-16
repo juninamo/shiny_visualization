@@ -747,7 +747,14 @@ server <- function(input, output, session) {
       sliderInput("plot_width", t("plot_width"), min = 400, max = 4000, value = 800, step = 50),
 
       # リファレンス用のプロット設定（比較時のみ表示）
-      uiOutput("ref_plot_settings_ui")
+      uiOutput("ref_plot_settings_ui"),
+
+      # Heatmap / Dot plot 共通のマーカー・クラスター設定（両タブで共有）
+      conditionalPanel(
+        "input.main_tabs == 'heatmap' || input.main_tabs == 'dotplot'",
+        hr(),
+        uiOutput("marker_shared_ui")
+      )
     )
   })
 
@@ -1825,8 +1832,7 @@ server <- function(input, output, session) {
                    multiple = TRUE,
                    options = list(plugins = list("remove_button"), maxOptions = 2000))
   }
-  output$hm_set_genes_ui  <- renderUI({ set_genes_select_ui("hm") })
-  output$dot_set_genes_ui <- renderUI({ set_genes_select_ui("dot") })
+  output$mk_set_genes_ui  <- renderUI({ set_genes_select_ui("mk") })
 
   # --- 描画クラスター選択UI（クラスター変数に追従、デフォルトは全選択） ---
   # 大分類(coarse)列で絞ったあとの対象クラスター（ネスト2段階選択の1段目）
@@ -1967,20 +1973,16 @@ server <- function(input, output, session) {
     avg  # genes x clusters
   }
 
-  # 描画クラスター選択UI（各タブ）
-  output$hm_clusters_ui   <- renderUI({ cluster_select_ui("hm") })
-  output$dot_clusters_ui  <- renderUI({ cluster_select_ui("dot") })
+  # 描画クラスター選択UI（mk = Heatmap/Dot 共通、comp = Composition）
+  output$mk_clusters_ui   <- renderUI({ cluster_select_ui("mk") })
   output$comp_clusters_ui <- renderUI({ cluster_select_ui("comp") })
   # リファレンス側のサブ選択
-  output$hm_clusters_ref_ui   <- renderUI({ ref_cluster_select_ui("hm") })
-  output$dot_clusters_ref_ui  <- renderUI({ ref_cluster_select_ui("dot") })
+  output$mk_clusters_ref_ui   <- renderUI({ ref_cluster_select_ui("mk") })
   output$comp_clusters_ref_ui <- renderUI({ ref_cluster_select_ui("comp") })
   # coarse(大分類)の値選択UI（active / reference）
-  output$hm_coarse_ui   <- renderUI({ coarse_values_ui("hm", seurat_obj()) })
-  output$dot_coarse_ui  <- renderUI({ coarse_values_ui("dot", seurat_obj()) })
+  output$mk_coarse_ui   <- renderUI({ coarse_values_ui("mk", seurat_obj()) })
   output$comp_coarse_ui <- renderUI({ coarse_values_ui("comp", seurat_obj()) })
-  output$hm_coarse_ref_ui   <- renderUI({ coarse_values_ui("hm", ref_obj(), "_ref") })
-  output$dot_coarse_ref_ui  <- renderUI({ coarse_values_ui("dot", ref_obj(), "_ref") })
+  output$mk_coarse_ref_ui   <- renderUI({ coarse_values_ui("mk", ref_obj(), "_ref") })
   output$comp_coarse_ref_ui <- renderUI({ coarse_values_ui("comp", ref_obj(), "_ref") })
 
   # 描画実行ボタン（自動描画せず、押したときだけ描画）
@@ -1997,6 +1999,16 @@ server <- function(input, output, session) {
   # ==========================================================================
   # Heatmap
   # ==========================================================================
+  # Heatmap / Dot 共通のマーカー・クラスター設定（サイドバーに1か所だけ描画）。
+  # これにより遺伝子・クラスターの選択が両タブで共有される。
+  output$marker_shared_ui <- renderUI({
+    lang <- input$lang
+    if (!data_loaded()) return(NULL)
+    col_types <- meta_col_types()
+    if (length(col_types$cat) == 0) return(NULL)
+    marker_settings_card("mk", NULL, feature_mode = TRUE)
+  })
+
   output$heatmap_panel_ui <- renderUI({
     lang <- input$lang
     if (!data_loaded()) return(placeholder_ui())
@@ -2005,24 +2017,18 @@ server <- function(input, output, session) {
       return(div(class = "text-center text-muted py-4", h5(t("comp_no_cat"))))
     }
 
-    extra <- fluidRow(
-      column(4,
-        checkboxInput("hm_scale", t("hm_scale"),
-                      value = isolate(input$hm_scale) %||% TRUE)
-      ),
-      column(4,
-        checkboxInput("hm_cluster_rows", t("hm_cluster_rows"),
-                      value = isolate(input$hm_cluster_rows) %||% TRUE)
-      ),
-      column(4,
-        checkboxInput("hm_cluster_cols", t("hm_cluster_cols"),
-                      value = isolate(input$hm_cluster_cols) %||% TRUE)
-      )
-    )
-    extra <- tagList(extra, plot_run_btn("hm_run"))
-
     tagList(
-      marker_settings_card("hm", extra, feature_mode = TRUE),
+      div(class = "card mb-3", div(class = "card-body",
+        fluidRow(
+          column(4, checkboxInput("hm_scale", t("hm_scale"),
+                                  value = isolate(input$hm_scale) %||% TRUE)),
+          column(4, checkboxInput("hm_cluster_rows", t("hm_cluster_rows"),
+                                  value = isolate(input$hm_cluster_rows) %||% TRUE)),
+          column(4, checkboxInput("hm_cluster_cols", t("hm_cluster_cols"),
+                                  value = isolate(input$hm_cluster_cols) %||% TRUE))
+        ),
+        plot_run_btn("hm_run")
+      )),
       uiOutput("heatmap_plot_ui")
     )
   })
@@ -2035,16 +2041,17 @@ server <- function(input, output, session) {
 
   # 「描画」ボタンを押したときだけ計算（自動描画しない）
   # 1データセットの平均発現マトリクス（Z-score・クリップ済み）を構築
-  build_hm_mat <- function(obj, cluster_var = input$hm_cluster,
-                           clusters_sel = input$hm_clusters_sel) {
-    genes <- resolve_marker_genes("hm")
+  build_hm_mat <- function(obj, cluster_var = input$mk_cluster,
+                           clusters_sel = input$mk_clusters_sel) {
+    genes <- resolve_marker_genes("mk")
     if (length(genes) == 0) return(NULL)
     if (is.null(cluster_var) || !(cluster_var %in% names(obj@meta.data))) return(NULL)
     clusters <- selected_clusters_v(clusters_sel, obj, cluster_var)
     avg <- marker_avg_matrix(obj, cluster_var, genes, clusters)
     if (is.null(avg) || nrow(avg) == 0) return(NULL)
     mat <- avg
-    if (isTRUE(input$hm_scale)) {
+    # Z-score はクラスター(列)が2つ以上ないと計算できない（1列は全てNaNになる）
+    if (isTRUE(input$hm_scale) && ncol(mat) >= 2) {
       # NOTE: server scope の t() は翻訳ヘルパーなので転置は base::t() を使う
       mat <- base::t(scale(base::t(mat)))   # 遺伝子(行)ごとに Z-score
       mat <- mat[stats::complete.cases(mat), , drop = FALSE]
@@ -2097,14 +2104,14 @@ server <- function(input, output, session) {
   }
 
   heatmap_spec <- eventReactive(input$hm_run, {
-    req(seurat_obj(), input$hm_cluster)
+    req(seurat_obj(), input$mk_cluster)
     ma <- build_hm_mat(seurat_obj())
     validate(need(!is.null(ma) && nrow(ma) > 0, t("hm_no_genes")))
     rb <- ref_obj()
     list(active = ma,
          ref = if (!is.null(rb)) {
-           build_hm_mat(rb, cluster_var = ref_tab_cluster("hm"),
-                        clusters_sel = input$hm_clusters_sel_ref)
+           build_hm_mat(rb, cluster_var = ref_tab_cluster("mk"),
+                        clusters_sel = input$mk_clusters_sel_ref)
          } else NULL,
          ref_present = !is.null(rb),
          names = c(active_name(), ref_name() %||% ""),
@@ -2138,21 +2145,16 @@ server <- function(input, output, session) {
       return(div(class = "text-center text-muted py-4", h5(t("comp_no_cat"))))
     }
 
-    extra <- fluidRow(
-      column(6,
-        sliderInput("dot_scale", t("dot_scale"),
-                    min = 2, max = 12,
-                    value = isolate(input$dot_scale) %||% 6, step = 1)
-      ),
-      column(6,
-        checkboxInput("dot_facet", t("dot_facet"),
-                      value = isolate(input$dot_facet) %||% TRUE)
-      )
-    )
-    extra <- tagList(extra, plot_run_btn("dot_run"))
-
     tagList(
-      marker_settings_card("dot", extra, feature_mode = TRUE),
+      div(class = "card mb-3", div(class = "card-body",
+        fluidRow(
+          column(6, sliderInput("dot_scale", t("dot_scale"), min = 2, max = 12,
+                                value = isolate(input$dot_scale) %||% 6, step = 1)),
+          column(6, checkboxInput("dot_facet", t("dot_facet"),
+                                  value = isolate(input$dot_facet) %||% TRUE))
+        ),
+        plot_run_btn("dot_run")
+      )),
       uiOutput("dotplot_plot_ui")
     )
   })
@@ -2168,13 +2170,13 @@ server <- function(input, output, session) {
   })
 
   # 「描画」ボタンを押したときだけ計算
-  build_dot <- function(obj, cluster_var = input$dot_cluster,
-                        clusters_sel = input$dot_clusters_sel,
+  build_dot <- function(obj, cluster_var = input$mk_cluster,
+                        clusters_sel = input$mk_clusters_sel,
                         interactive = FALSE) {
     pt <- plot_theme()
     if (is.null(cluster_var) || !(cluster_var %in% names(obj@meta.data))) return(empty_panel(t("ref_missing")))
 
-    set_df <- resolve_marker_set_df("dot")
+    set_df <- resolve_marker_set_df("mk")
     genes_all <- unique(set_df$feature)
     validate(need(length(genes_all) > 0, t("hm_no_genes")))
     mat <- get_expr_matrix(obj, genes_all)     # genes x cells
@@ -2269,14 +2271,14 @@ server <- function(input, output, session) {
 
   # 「描画」ボタンを押したときだけ計算（アクティブ / リファレンス別出力）
   dot_active_obj <- eventReactive(input$dot_run, {
-    req(seurat_obj(), input$dot_cluster)
+    req(seurat_obj(), input$mk_cluster)
     build_dot(seurat_obj())
   }, ignoreInit = TRUE)
   dot_ref_obj <- eventReactive(input$dot_run, {
     rb <- ref_obj()
     if (is.null(rb)) return(NULL)
-    build_dot(rb, cluster_var = ref_tab_cluster("dot"),
-              clusters_sel = input$dot_clusters_sel_ref)
+    build_dot(rb, cluster_var = ref_tab_cluster("mk"),
+              clusters_sel = input$mk_clusters_sel_ref)
   }, ignoreInit = TRUE)
 
   output$dotplot_plot     <- renderPlot({ dot_active_obj() }, bg = "transparent")
@@ -2343,15 +2345,15 @@ server <- function(input, output, session) {
       gp
     }
     dot_plotly_active <- eventReactive(input$dot_run, {
-      req(seurat_obj(), input$dot_cluster)
+      req(seurat_obj(), input$mk_cluster)
       dot_to_plotly(build_dot(seurat_obj(), interactive = TRUE), input$dot_scale)
     }, ignoreInit = TRUE)
     dot_plotly_refobj <- eventReactive(input$dot_run, {
       rb <- ref_obj()
       if (is.null(rb)) return(NULL)
       dot_to_plotly(
-        build_dot(rb, cluster_var = ref_tab_cluster("dot"),
-                  clusters_sel = input$dot_clusters_sel_ref, interactive = TRUE),
+        build_dot(rb, cluster_var = ref_tab_cluster("mk"),
+                  clusters_sel = input$mk_clusters_sel_ref, interactive = TRUE),
         input$dot_scale)
     }, ignoreInit = TRUE)
     output$dot_plotly     <- plotly::renderPlotly({ dot_plotly_active() })
