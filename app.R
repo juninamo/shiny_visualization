@@ -56,6 +56,18 @@ lineage_color_ramp <- function(category, n) {
   rep("grey60", n)
 }
 
+# 末尾の系統名を取り出す（"0_B_Plasma" -> "B_Plasma"）。
+# regmatches はマッチしない要素を取り除いて長さが変わるため、ここでは
+# マッチしない要素は "" にして必ず入力と同じ長さのベクトルを返す。
+extract_lineage <- function(x) {
+  x <- as.character(x)
+  m <- regexpr("[A-Za-z_]+$", x)
+  out <- rep("", length(x))
+  hit <- m != -1
+  if (any(hit)) out[hit] <- regmatches(x, m)
+  sub("^_+", "", out)
+}
+
 generate_cluster_colors <- function(levels) {
   raw <- as.character(levels)
   clean <- raw[raw != "NA" & !is.na(raw)]
@@ -63,9 +75,8 @@ generate_cluster_colors <- function(levels) {
     out <- setNames(character(0), character(0))
   } else {
     num_prefix <- suppressWarnings(as.numeric(sub("^(\\d+).*", "\\1", clean)))
-    coarse_raw <- regmatches(clean, regexpr("[A-Za-z_]+$", clean))
-    # 末尾の系統名から先頭のアンダースコアを除去 ("_B_Plasma" -> "B_Plasma")
-    coarse <- sub("^_+", "", coarse_raw)
+    # 末尾の系統名（長さを保つ）
+    coarse <- extract_lineage(clean)
     df <- data.frame(cluster = clean, num_prefix = num_prefix,
                      coarse = coarse, color = NA_character_,
                      stringsAsFactors = FALSE)
@@ -94,8 +105,7 @@ lineage_colors_or_null <- function(levels) {
   levs <- as.character(unique(levels))
   levs <- levs[!is.na(levs) & levs != "NA"]
   if (length(levs) == 0) return(NULL)
-  coarse_raw <- regmatches(levs, regexpr("[A-Za-z_]+$", levs))
-  coarse <- sub("^_+", "", coarse_raw)
+  coarse <- extract_lineage(levs)
   if (length(coarse) == 0 || mean(coarse %in% known_lineages) < 0.5) return(NULL)
   generate_cluster_colors(levels)
 }
@@ -109,7 +119,7 @@ cluster_level_order <- function(levels) {
   na_lev <- levs[is.na(levs) | levs == "NA"]
   levs <- levs[!is.na(levs) & levs != "NA"]
   if (length(levs) == 0) return(c(levs, na_lev))
-  coarse <- sub("^_+", "", regmatches(levs, regexpr("[A-Za-z_]+$", levs)))
+  coarse <- extract_lineage(levs)
   num_prefix <- suppressWarnings(as.numeric(sub("^(\\d+).*", "\\1", levs)))
   if (length(coarse) > 0 && mean(coarse %in% known_lineages) >= 0.5) {
     # 系統順（既知系統を優先）→ 系統名 → 先頭数字
