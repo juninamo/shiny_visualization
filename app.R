@@ -222,14 +222,40 @@ marker_set_to_df <- function(set) {
 }
 
 # Seurat v4/v5 両対応で発現マトリクス (genes x cells) を取得
+# Seurat v5 で data レイヤーが複数（未結合の multi-layer assay）の場合、
+# GetAssayData(layer="data") はエラーになる。その場合は各 data レイヤーを
+# LayerData で取り出して横結合（cbind）する。返す行列の列は obj の細胞順に揃える。
 get_expr_matrix <- function(obj, genes) {
   genes <- intersect(genes, rownames(obj))
   if (length(genes) == 0) return(NULL)
+  assay <- SeuratObject::DefaultAssay(obj)
   mat <- tryCatch(
-    Seurat::GetAssayData(obj, layer = "data"),
-    error = function(e) Seurat::GetAssayData(obj, slot = "data")
+    Seurat::GetAssayData(obj, assay = assay, layer = "data"),
+    error = function(e) NULL
   )
-  mat[genes, , drop = FALSE]
+  if (is.null(mat)) {
+    mat <- tryCatch(Seurat::GetAssayData(obj, assay = assay, slot = "data"),
+                    error = function(e) NULL)
+  }
+  if (is.null(mat)) {
+    # v5 複数レイヤー: data.* （無ければ counts.*）レイヤーを結合
+    layers <- tryCatch(SeuratObject::Layers(obj, assay = assay),
+                       error = function(e) character(0))
+    dl <- layers[grepl("^data", layers)]
+    if (length(dl) == 0) dl <- layers[grepl("^counts", layers)]
+    if (length(dl) == 0) return(NULL)
+    parts <- lapply(dl, function(ly) {
+      m <- SeuratObject::LayerData(obj, assay = assay, layer = ly)
+      m[intersect(genes, rownames(m)), , drop = FALSE]
+    })
+    mat <- do.call(cbind, parts)
+  }
+  genes <- intersect(genes, rownames(mat))
+  if (length(genes) == 0) return(NULL)
+  mat <- mat[genes, , drop = FALSE]
+  # 列をオブジェクトの細胞順に揃える（cbind で順序が変わる場合の対策）
+  cells <- intersect(colnames(obj), colnames(mat))
+  mat[, cells, drop = FALSE]
 }
 
 # =============================================================================
@@ -287,6 +313,7 @@ i18n <- list(
     comp_settings        = "組成プロット設定",
     comp_cluster         = "クラスター変数 (塗り分け)",
     comp_x               = "X軸変数",
+    comp_x_ref           = "X軸変数 (リファレンス)",
     comp_facets          = "ファセット変数 (任意・複数可)",
     comp_color_scheme    = "配色",
     comp_scheme_lineage  = "系統グラデーション (動的)",
@@ -391,6 +418,7 @@ i18n <- list(
     comp_settings        = "Composition Plot Settings",
     comp_cluster         = "Cluster Variable (fill)",
     comp_x               = "X-axis Variable",
+    comp_x_ref           = "X-axis Variable (reference)",
     comp_facets          = "Facet Variables (optional)",
     comp_color_scheme    = "Color Scheme",
     comp_scheme_lineage  = "Lineage gradient (dynamic)",
@@ -1234,6 +1262,29 @@ server <- function(input, output, session) {
     cols[1]
   })
 
+  # Composition のリファレンス X軸（未指定ならアクティブと同名→先頭）
+  ref_comp_x <- reactive({
+    cols <- ref_cat_cols()
+    if (length(cols) == 0) return(NULL)
+    sel <- input$comp_x_ref
+    if (!is.null(sel) && sel %in% cols) return(sel)
+    if (!is.null(input$comp_x) && input$comp_x %in% cols) return(input$comp_x)
+    cols[1]
+  })
+
+  output$comp_x_ref_ui <- renderUI({
+    lang <- input$lang
+    if (is.null(ref_obj())) return(NULL)
+    cols <- ref_cat_cols()
+    if (length(cols) == 0) return(NULL)
+    sel <- isolate(input$comp_x_ref)
+    if (is.null(sel) || !(sel %in% cols)) {
+      ax <- isolate(input$comp_x)
+      sel <- if (!is.null(ax) && ax %in% cols) ax else cols[1]
+    }
+    selectInput("comp_x_ref", t("comp_x_ref"), choices = cols, selected = sel)
+  })
+
   output$ref_group_var_ui <- renderUI({
     lang <- input$lang
     cols <- ref_cat_cols()
@@ -1399,6 +1450,7 @@ server <- function(input, output, session) {
           uiOutput("comp_clusters_ui"),
           # リファレンス用のクラスター選択（比較時のみ）
           ref_cluster_controls_ui("comp"),
+          uiOutput("comp_x_ref_ui"),
           fluidRow(
             column(12,
               radioButtons("comp_color_scheme", t("comp_color_scheme"),
@@ -1442,12 +1494,12 @@ server <- function(input, output, session) {
   # fill_var/clusters_sel を引数化（active と reference で別々のクラスター選択に対応）
   build_comp <- function(obj, interactive = FALSE,
                          fill_var = input$comp_cluster,
-                         clusters_sel = input$comp_clusters_sel) {
+                         clusters_sel = input$comp_clusters_sel,
+                         x_var = input$comp_x) {
     pt <- plot_theme()
     meta <- obj@meta.data
 
-    x_var <- input$comp_x
-    if (is.null(fill_var) || !all(c(fill_var, x_var) %in% names(meta))) {
+    if (is.null(fill_var) || is.null(x_var) || !all(c(fill_var, x_var) %in% names(meta))) {
       return(empty_panel(t("ref_missing")))
     }
     facet_vars <- input$comp_facets
@@ -1541,7 +1593,8 @@ server <- function(input, output, session) {
     pa <- build_comp(seurat_obj())
     pr <- if (!is.null(rb)) {
       build_comp(rb, fill_var = ref_tab_cluster("comp"),
-                 clusters_sel = input$comp_clusters_sel_ref)
+                 clusters_sel = input$comp_clusters_sel_ref,
+                 x_var = ref_comp_x())
     } else NULL
     combine_gg(pa, pr, active_name(), ref_name())
   }, ignoreInit = TRUE)
@@ -1554,9 +1607,10 @@ server <- function(input, output, session) {
   if (requireNamespace("plotly", quietly = TRUE)) {
     comp_gg_titled <- function(obj, title = NULL,
                                fill_var = input$comp_cluster,
-                               clusters_sel = input$comp_clusters_sel) {
+                               clusters_sel = input$comp_clusters_sel,
+                               x_var = input$comp_x) {
       p <- build_comp(obj, interactive = TRUE, fill_var = fill_var,
-                      clusters_sel = clusters_sel)
+                      clusters_sel = clusters_sel, x_var = x_var)
       if (!is.null(title)) p <- p + ggtitle(title)
       gp <- plotly::ggplotly(p, tooltip = "text")
       # スタックは factor 反転で上端=系統先頭。凡例も系統先頭が上に来るよう反転。
@@ -1572,7 +1626,8 @@ server <- function(input, output, session) {
       if (is.null(rb)) return(NULL)
       comp_gg_titled(rb, ref_name(),
                      fill_var = ref_tab_cluster("comp"),
-                     clusters_sel = input$comp_clusters_sel_ref)
+                     clusters_sel = input$comp_clusters_sel_ref,
+                     x_var = ref_comp_x())
     }, ignoreInit = TRUE)
 
     output$comp_plotly     <- plotly::renderPlotly({ comp_plotly_obj() })
@@ -1785,7 +1840,8 @@ server <- function(input, output, session) {
   marker_avg_matrix <- function(obj, cluster_var, genes, clusters = NULL) {
     mat <- get_expr_matrix(obj, genes)        # genes x cells（存在する遺伝子のみ）
     if (is.null(mat)) return(NULL)
-    labels <- as.character(obj@meta.data[[cluster_var]])
+    # 列(細胞)順に合わせてラベルを取得（位置ではなく細胞名で対応付け）
+    labels <- as.character(obj@meta.data[colnames(mat), cluster_var])
     keep <- !is.na(labels)
     mat <- mat[, keep, drop = FALSE]
     labels <- labels[keep]
@@ -2007,7 +2063,8 @@ server <- function(input, output, session) {
     mat <- get_expr_matrix(obj, genes_all)     # genes x cells
     if (is.null(mat) || nrow(mat) == 0) return(empty_panel(t("ref_missing")))
 
-    labels <- as.character(obj@meta.data[[cluster_var]])
+    # 列(細胞)順に合わせてラベルを取得（位置ではなく細胞名で対応付け）
+    labels <- as.character(obj@meta.data[colnames(mat), cluster_var])
     keep <- !is.na(labels)
     mat <- mat[, keep, drop = FALSE]
     labels <- labels[keep]
