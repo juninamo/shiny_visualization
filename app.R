@@ -2535,6 +2535,7 @@ server <- function(input, output, session) {
     # --- 統合ドット用ロングデータ（行=クラスター・列=遺伝子を階層クラスタリング）---
     na <- active_name(); nr <- ref_name() %||% "ref"
     ids <- c(paste0(na, " | ", colnames(zA)), paste0(nr, " | ", colnames(zR)))
+    src <- c(rep(na, ncol(zA)), rep(nr, ncol(zR)))
     avg_comb <- cbind(zA, zR); pct_comb <- cbind(A$pct[shared, , drop = FALSE],
                                                  R$pct[shared, , drop = FALSE])
     colnames(avg_comb) <- ids; colnames(pct_comb) <- ids
@@ -2545,14 +2546,30 @@ server <- function(input, output, session) {
       id      = factor(rep(ids, each = length(shared)), levels = clu_ord),
       avg     = as.vector(avg_comb), pct = as.vector(pct_comb),
       stringsAsFactors = FALSE)
-    list(long = long, corr = corr)
+    list(long = long, corr = corr, src = setNames(src, ids), clu_ord = clu_ord)
   }, ignoreInit = TRUE)
 
   output$dot_combined_plot <- renderPlot({
     cc <- dot_combined(); req(cc)
     pt <- plot_theme()
-    ggplot(cc$long, aes(x = feature, y = id)) +
-      geom_point(aes(size = pct, color = avg)) +
+    # 左端(クラスター文字列と図の間)にデータセット別アノテーション列を追加。
+    # ドットは color/size、アノテーションは fill を使うので別スケールで共存できる。
+    ann_lab <- "▮"
+    gene_levels <- c(ann_lab, levels(cc$long$feature))
+    dots <- cc$long
+    dots$feature <- factor(as.character(dots$feature), levels = gene_levels)
+    ann <- data.frame(
+      feature = factor(ann_lab, levels = gene_levels),
+      id      = factor(names(cc$src), levels = cc$clu_ord),
+      src     = factor(unname(cc$src), levels = unique(unname(cc$src))),
+      stringsAsFactors = FALSE)
+    src_pal <- setNames(c("#4C78A8", "#F58518", "#54A24B", "#E45756")[seq_along(levels(ann$src))],
+                        levels(ann$src))
+    ggplot() +
+      geom_tile(data = ann, aes(x = feature, y = id, fill = src),
+                width = 0.95, height = 0.95) +
+      scale_fill_manual(values = src_pal, name = "dataset", drop = FALSE) +
+      geom_point(data = dots, aes(x = feature, y = id, size = pct, color = avg)) +
       scale_radius(range = c(0, input$dot_scale %||% 6), limits = c(0, 100)) +
       scale_color_gradient2(midpoint = 0, low = "#3C5488FF", mid = "grey90",
                             high = "#DC0000FF", space = "Lab") +
