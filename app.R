@@ -249,11 +249,16 @@ i18n <- list(
     gene_name       = "遺伝子名",
     gene_placeholder = "ファイルを読み込んでください",
     group_var       = "グループ変数",
+    ref_group_var   = "グループ変数 (リファレンス)",
     umap_reduction  = "UMAP (reduction)",
     plot_settings   = "\U0001F3A8 プロット設定",
     pt_size         = "点のサイズ",
     plot_height     = "プロットの高さ (px)",
     plot_width      = "プロットの幅 (px)",
+    ref_plot_settings = "\U0001F3A8 プロット設定 (リファレンス)",
+    ref_pt_size     = "点のサイズ (リファレンス)",
+    ref_plot_height = "プロットの高さ (リファレンス)",
+    ref_plot_width  = "プロットの幅 (リファレンス)",
 
     # DEG
     deg_settings      = "DEG解析設定",
@@ -344,11 +349,16 @@ i18n <- list(
     gene_name       = "Gene",
     gene_placeholder = "Load an RDS file first",
     group_var       = "Group Variable",
+    ref_group_var   = "Group Variable (reference)",
     umap_reduction  = "UMAP (reduction)",
     plot_settings   = "\U0001F3A8 Plot Settings",
     pt_size         = "Point Size",
     plot_height     = "Plot Height (px)",
     plot_width      = "Plot Width (px)",
+    ref_plot_settings = "\U0001F3A8 Plot Settings (reference)",
+    ref_pt_size     = "Point Size (reference)",
+    ref_plot_height = "Plot Height (reference)",
+    ref_plot_width  = "Plot Width (reference)",
 
     # DEG
     deg_settings      = "DEG Analysis Settings",
@@ -667,6 +677,9 @@ server <- function(input, output, session) {
         choices = NULL
       ),
 
+      # リファレンス用グループ変数（比較時のみ表示）
+      uiOutput("ref_group_var_ui"),
+
       # UMAP reduction 選択（umap関連が複数ある場合のみ表示）
       uiOutput("umap_reduction_ui"),
 
@@ -676,7 +689,10 @@ server <- function(input, output, session) {
 
       sliderInput("pt_size", t("pt_size"), min = 0, max = 2, value = 0.3, step = 0.1),
       sliderInput("plot_height", t("plot_height"), min = 400, max = 1200, value = 600, step = 50),
-      sliderInput("plot_width", t("plot_width"), min = 400, max = 1600, value = 800, step = 50)
+      sliderInput("plot_width", t("plot_width"), min = 400, max = 1600, value = 800, step = 50),
+
+      # リファレンス用のプロット設定（比較時のみ表示）
+      uiOutput("ref_plot_settings_ui")
     )
   })
 
@@ -1124,6 +1140,49 @@ server <- function(input, output, session) {
       theme_void()
   }
 
+  # --- サイズ・点サイズのアクセサ（アクティブ / リファレンス別） ---
+  act_pt <- reactive({ input$pt_size %||% 0.3 })
+  ref_pt <- reactive({ input$ref_pt_size %||% (input$pt_size %||% 0.3) })
+  act_h  <- reactive({ paste0(input$plot_height %||% 600, "px") })
+  act_w  <- reactive({ paste0(input$plot_width %||% 800, "px") })
+  ref_h  <- reactive({ paste0(input$ref_plot_height %||% (input$plot_height %||% 600), "px") })
+  ref_w  <- reactive({ paste0(input$ref_plot_width %||% (input$plot_width %||% 800), "px") })
+
+  # リファレンス用プロット設定スライダー（比較時のみ表示）
+  output$ref_plot_settings_ui <- renderUI({
+    lang <- input$lang
+    if (is.null(ref_obj())) return(NULL)
+    tagList(
+      hr(),
+      h6(t("ref_plot_settings"), class = "text-primary mb-2"),
+      sliderInput("ref_pt_size", t("ref_pt_size"), min = 0, max = 2,
+                  value = isolate(input$ref_pt_size) %||% (isolate(input$pt_size) %||% 0.3), step = 0.1),
+      sliderInput("ref_plot_height", t("ref_plot_height"), min = 400, max = 1200,
+                  value = isolate(input$ref_plot_height) %||% (isolate(input$plot_height) %||% 600), step = 50),
+      sliderInput("ref_plot_width", t("ref_plot_width"), min = 400, max = 1600,
+                  value = isolate(input$ref_plot_width) %||% (isolate(input$plot_width) %||% 800), step = 50)
+    )
+  })
+
+  # --- アクティブ/リファレンスの2プロットを左右に並べるUI（個別サイズ） ---
+  # have_ref = FALSE なら active 単独。各パネルにデータセット名ラベル。
+  side_by_side_ui <- function(active_out, ref_out, have_ref) {
+    if (!have_ref) {
+      return(plotOutput(active_out, height = act_h(), width = act_w()))
+    }
+    div(
+      style = "display:flex; gap:14px; overflow-x:auto; align-items:flex-start;",
+      div(
+        h6(active_name(), class = "text-center text-muted mb-1"),
+        plotOutput(active_out, height = act_h(), width = act_w())
+      ),
+      div(
+        h6(ref_name() %||% "", class = "text-center text-muted mb-1"),
+        plotOutput(ref_out, height = ref_h(), width = ref_w())
+      )
+    )
+  }
+
   # 2つのggplotを左右に並べる（refがNULLなら単独）。各パネルに名前を付与。
   combine_gg <- function(p_active, p_ref, name_active = NULL, name_ref = NULL) {
     if (is.null(p_ref)) return(p_active)
@@ -1132,26 +1191,58 @@ server <- function(input, output, session) {
     patchwork::wrap_plots(p_active, p_ref, ncol = 2)
   }
 
+  # --- リファレンスのカテゴリ列・グループ変数（アクティブと別に選択可） ---
+  ref_cat_cols <- reactive({
+    rb <- ref_obj()
+    if (is.null(rb)) return(character(0))
+    meta <- rb@meta.data
+    names(meta)[sapply(meta, function(x) {
+      is.factor(x) || is.character(x) || (is.numeric(x) && length(unique(x)) <= 50)
+    })]
+  })
+
+  # リファレンスで使うグループ変数（未指定ならアクティブと同名→seurat_clusters→先頭）
+  ref_group_var <- reactive({
+    cols <- ref_cat_cols()
+    if (length(cols) == 0) return(NULL)
+    sel <- input$ref_group_var
+    if (!is.null(sel) && sel %in% cols) return(sel)
+    if (!is.null(input$group_var) && input$group_var %in% cols) return(input$group_var)
+    if ("seurat_clusters" %in% cols) return("seurat_clusters")
+    cols[1]
+  })
+
+  output$ref_group_var_ui <- renderUI({
+    lang <- input$lang
+    cols <- ref_cat_cols()
+    if (length(cols) == 0) return(NULL)
+    sel <- isolate(input$ref_group_var)
+    if (is.null(sel) || !(sel %in% cols)) {
+      ag <- isolate(input$group_var)
+      sel <- if (!is.null(ag) && ag %in% cols) ag
+             else if ("seurat_clusters" %in% cols) "seurat_clusters" else cols[1]
+    }
+    selectInput("ref_group_var", t("ref_group_var"), choices = cols, selected = sel)
+  })
+
   # ==========================================================================
   # Violin Plot
   # ==========================================================================
   output$violin_ui <- renderUI({
     if (!data_loaded()) return(placeholder_ui())
-    plotOutput("violin_plot",
-               height = paste0(input$plot_height, "px"),
-               width = paste0(input$plot_width, "px"))
+    side_by_side_ui("violin_plot", "violin_plot_ref", !is.null(ref_obj()))
   })
 
-  build_violin <- function(obj) {
+  build_violin <- function(obj, group_var, pt_size) {
     pt <- plot_theme()
     if (!(input$gene %in% rownames(obj))) return(empty_panel(t("ref_missing")))
-    if (!(input$group_var %in% names(obj@meta.data))) return(empty_panel(t("ref_missing")))
+    if (is.null(group_var) || !(group_var %in% names(obj@meta.data))) return(empty_panel(t("ref_missing")))
     # クラスターを系統順 factor に並べ替え（軸・色順を統一）
     Idents(obj) <- factor(
-      as.character(obj@meta.data[[input$group_var]]),
-      levels = cluster_level_order(obj@meta.data[[input$group_var]])
+      as.character(obj@meta.data[[group_var]]),
+      levels = cluster_level_order(obj@meta.data[[group_var]])
     )
-    p <- VlnPlot(obj, features = input$gene, pt.size = input$pt_size) + pt$theme
+    p <- VlnPlot(obj, features = input$gene, pt.size = pt_size) + pt$theme
     lin_cols <- lineage_colors_or_null(levels(Idents(obj)))
     if (!is.null(lin_cols)) p <- p + scale_fill_manual(values = lin_cols)
     p
@@ -1159,10 +1250,12 @@ server <- function(input, output, session) {
 
   output$violin_plot <- renderPlot({
     req(seurat_obj(), input$gene, input$group_var)
-    rb <- ref_obj()
-    pa <- build_violin(seurat_obj())
-    pr <- if (!is.null(rb)) build_violin(rb) else NULL
-    combine_gg(pa, pr, active_name(), ref_name())
+    build_violin(seurat_obj(), input$group_var, act_pt())
+  }, bg = "transparent")
+
+  output$violin_plot_ref <- renderPlot({
+    req(ref_obj(), input$gene)
+    build_violin(ref_obj(), ref_group_var(), ref_pt())
   }, bg = "transparent")
 
   # ==========================================================================
@@ -1171,25 +1264,26 @@ server <- function(input, output, session) {
   output$feature_umap_ui <- renderUI({
     if (!data_loaded()) return(placeholder_ui())
     if (!has_umap()) return(no_umap_ui())
-    plotOutput("feature_umap_plot",
-               height = paste0(input$plot_height, "px"),
-               width = paste0(input$plot_width, "px"))
+    side_by_side_ui("feature_umap_plot", "feature_umap_plot_ref", !is.null(ref_obj()))
   })
 
-  build_feature <- function(obj, reduction) {
+  build_feature <- function(obj, reduction, pt_size) {
     pt <- plot_theme()
     if (is.null(reduction)) return(empty_panel(t("no_umap_title")))
     if (!(input$gene %in% rownames(obj))) return(empty_panel(t("ref_missing")))
     FeaturePlot(obj, features = input$gene, reduction = reduction,
-                pt.size = input$pt_size) + pt$theme_legend
+                pt.size = pt_size) + pt$theme_legend +
+      theme(legend.position = "bottom")
   }
 
   output$feature_umap_plot <- renderPlot({
     req(seurat_obj(), input$gene, has_umap())
-    rb <- ref_obj()
-    pa <- build_feature(seurat_obj(), umap_reduction())
-    pr <- if (!is.null(rb)) build_feature(rb, find_umap_reduction(rb)) else NULL
-    combine_gg(pa, pr, active_name(), ref_name())
+    build_feature(seurat_obj(), umap_reduction(), act_pt())
+  }, bg = "transparent")
+
+  output$feature_umap_plot_ref <- renderPlot({
+    req(ref_obj(), input$gene)
+    build_feature(ref_obj(), find_umap_reduction(ref_obj()), ref_pt())
   }, bg = "transparent")
 
   # ==========================================================================
@@ -1198,33 +1292,34 @@ server <- function(input, output, session) {
   output$group_umap_ui <- renderUI({
     if (!data_loaded()) return(placeholder_ui())
     if (!has_umap()) return(no_umap_ui())
-    plotOutput("group_umap_plot",
-               height = paste0(input$plot_height, "px"),
-               width = paste0(input$plot_width, "px"))
+    side_by_side_ui("group_umap_plot", "group_umap_plot_ref", !is.null(ref_obj()))
   })
 
-  build_group_umap <- function(obj, reduction) {
+  build_group_umap <- function(obj, group_var, reduction, pt_size) {
     pt <- plot_theme()
     if (is.null(reduction)) return(empty_panel(t("no_umap_title")))
-    if (!(input$group_var %in% names(obj@meta.data))) return(empty_panel(t("ref_missing")))
+    if (is.null(group_var) || !(group_var %in% names(obj@meta.data))) return(empty_panel(t("ref_missing")))
     # クラスターを系統順 factor に並べ替え（凡例・色順を統一）
-    obj@meta.data[[input$group_var]] <- factor(
-      as.character(obj@meta.data[[input$group_var]]),
-      levels = cluster_level_order(obj@meta.data[[input$group_var]])
+    obj@meta.data[[group_var]] <- factor(
+      as.character(obj@meta.data[[group_var]]),
+      levels = cluster_level_order(obj@meta.data[[group_var]])
     )
-    p <- DimPlot(obj, reduction = reduction, group.by = input$group_var,
-                 label = TRUE, pt.size = input$pt_size) + pt$theme_legend
-    lin_cols <- lineage_colors_or_null(obj@meta.data[[input$group_var]])
+    p <- DimPlot(obj, reduction = reduction, group.by = group_var,
+                 label = TRUE, pt.size = pt_size) + pt$theme_legend +
+      theme(legend.position = "bottom")
+    lin_cols <- lineage_colors_or_null(obj@meta.data[[group_var]])
     if (!is.null(lin_cols)) p <- p + scale_color_manual(values = lin_cols)
     p
   }
 
   output$group_umap_plot <- renderPlot({
     req(seurat_obj(), input$group_var, has_umap())
-    rb <- ref_obj()
-    pa <- build_group_umap(seurat_obj(), umap_reduction())
-    pr <- if (!is.null(rb)) build_group_umap(rb, find_umap_reduction(rb)) else NULL
-    combine_gg(pa, pr, active_name(), ref_name())
+    build_group_umap(seurat_obj(), input$group_var, umap_reduction(), act_pt())
+  }, bg = "transparent")
+
+  output$group_umap_plot_ref <- renderPlot({
+    req(ref_obj(), has_umap())
+    build_group_umap(ref_obj(), ref_group_var(), find_umap_reduction(ref_obj()), ref_pt())
   }, bg = "transparent")
 
   # ==========================================================================
@@ -1299,15 +1394,16 @@ server <- function(input, output, session) {
     if ((input$comp_run %||% 0) == 0) return(run_hint_ui())
     # plotly があればインタラクティブ（バーにホバーでクラスター表示）
     if (requireNamespace("plotly", quietly = TRUE)) {
-      h <- paste0(input$plot_height, "px")
       if (is.null(ref_obj())) {
-        plotly::plotlyOutput("comp_plotly", height = h,
-                             width = paste0(input$plot_width, "px"))
+        plotly::plotlyOutput("comp_plotly", height = act_h(), width = act_w())
       } else {
-        # リファレンス比較は2つのplotlyを左右に並べる
-        fluidRow(
-          column(6, plotly::plotlyOutput("comp_plotly", height = h)),
-          column(6, plotly::plotlyOutput("comp_plotly_ref", height = h))
+        # リファレンス比較は2つのplotlyを左右に並べる（個別サイズ）
+        div(
+          style = "display:flex; gap:14px; overflow-x:auto; align-items:flex-start;",
+          div(h6(active_name(), class = "text-center text-muted mb-1"),
+              plotly::plotlyOutput("comp_plotly", height = act_h(), width = act_w())),
+          div(h6(ref_name() %||% "", class = "text-center text-muted mb-1"),
+              plotly::plotlyOutput("comp_plotly_ref", height = ref_h(), width = ref_w()))
         )
       }
     } else {
@@ -1663,9 +1759,7 @@ server <- function(input, output, session) {
   output$heatmap_plot_ui <- renderUI({
     if (!data_loaded()) return(NULL)
     if ((input$hm_run %||% 0) == 0) return(run_hint_ui())
-    plotOutput("heatmap_plot",
-               height = paste0(input$plot_height, "px"),
-               width = paste0(input$plot_width, "px"))
+    side_by_side_ui("heatmap_plot", "heatmap_plot_ref", !is.null(ref_obj()))
   })
 
   # 「描画」ボタンを押したときだけ計算（自動描画しない）
@@ -1719,17 +1813,19 @@ server <- function(input, output, session) {
 
   output$heatmap_plot <- renderPlot({
     spec <- heatmap_spec()
-    g_active <- hm_grob(spec$active, spec$names[1], spec$cluster_rows, spec$cluster_cols)
-    if (!spec$ref_present) {
-      grid::grid.newpage(); grid::grid.draw(g_active)
+    g <- hm_grob(spec$active, spec$names[1], spec$cluster_rows, spec$cluster_cols)
+    grid::grid.newpage(); grid::grid.draw(g)
+  }, bg = "white")
+
+  output$heatmap_plot_ref <- renderPlot({
+    spec <- heatmap_spec()
+    req(spec$ref_present)
+    g <- if (is.null(spec$ref)) {
+      grid::textGrob(t("ref_missing"), gp = grid::gpar(col = "grey50"))
     } else {
-      g_ref <- if (is.null(spec$ref)) {
-        grid::textGrob(t("ref_missing"), gp = grid::gpar(col = "grey50"))
-      } else {
-        hm_grob(spec$ref, spec$names[2], spec$cluster_rows, spec$cluster_cols)
-      }
-      gridExtra::grid.arrange(g_active, g_ref, ncol = 2)
+      hm_grob(spec$ref, spec$names[2], spec$cluster_rows, spec$cluster_cols)
     }
+    grid::grid.newpage(); grid::grid.draw(g)
   }, bg = "white")
 
   # ==========================================================================
@@ -1765,9 +1861,7 @@ server <- function(input, output, session) {
   output$dotplot_plot_ui <- renderUI({
     if (!data_loaded()) return(NULL)
     if ((input$dot_run %||% 0) == 0) return(run_hint_ui())
-    plotOutput("dotplot_plot",
-               height = paste0(input$plot_height, "px"),
-               width = paste0(input$plot_width, "px"))
+    side_by_side_ui("dotplot_plot", "dotplot_plot_ref", !is.null(ref_obj()))
   })
 
   # 「描画」ボタンを押したときだけ計算
@@ -1854,16 +1948,19 @@ server <- function(input, output, session) {
     p
   }
 
-  # 「描画」ボタンを押したときだけ計算（アクティブ + リファレンス）
-  dotplot_obj <- eventReactive(input$dot_run, {
+  # 「描画」ボタンを押したときだけ計算（アクティブ / リファレンス別出力）
+  dot_active_obj <- eventReactive(input$dot_run, {
     req(seurat_obj(), input$dot_cluster)
+    build_dot(seurat_obj())
+  }, ignoreInit = TRUE)
+  dot_ref_obj <- eventReactive(input$dot_run, {
     rb <- ref_obj()
-    pa <- build_dot(seurat_obj())
-    pr <- if (!is.null(rb)) build_dot(rb) else NULL
-    combine_gg(pa, pr, active_name(), ref_name())
+    if (is.null(rb)) return(NULL)
+    build_dot(rb)
   }, ignoreInit = TRUE)
 
-  output$dotplot_plot <- renderPlot({ dotplot_obj() }, bg = "transparent")
+  output$dotplot_plot     <- renderPlot({ dot_active_obj() }, bg = "transparent")
+  output$dotplot_plot_ref <- renderPlot({ req(dot_ref_obj()) }, bg = "transparent")
 
   # ==========================================================================
   # DEG解析

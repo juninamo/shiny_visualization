@@ -26,8 +26,10 @@ feature immediately.
 
 - **Multi-dataset comparison** — load several `.rds` files at once, pick an
   **active** and a **reference** dataset, and every tab (Violin, Feature/Group
-  UMAP, Composition, Heatmap, Dot Plot) renders the two **side by side** with the
-  same gene and settings. Set the reference to *(none)* for a single view.
+  UMAP, Composition, Heatmap, Dot Plot) renders the two **side by side**. The
+  **group variable**, **point size**, **plot height** and **plot width** can be
+  set **independently** for the active and reference datasets. Set the reference
+  to *(none)* for a single view.
 - **Pre-registered marker sets** — curated panels (`Cell type`, `T cell`, `B cell`,
   `Myeloid`, `NK / ILC`, `Stromal / Tissue`, `All curated`) drive the Heatmap and
   Dot Plot tabs. On the Heatmap/Dot Plot/DEG tabs you can use a *set*, a
