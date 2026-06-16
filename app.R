@@ -1406,9 +1406,12 @@ server <- function(input, output, session) {
       as.character(obj@meta.data[[group_var]]),
       levels = cluster_level_order(obj@meta.data[[group_var]])
     )
+    n_lev <- nlevels(obj@meta.data[[group_var]])
     p <- DimPlot(obj, reduction = reduction, group.by = group_var,
                  label = FALSE, pt.size = pt_size) + pt$theme_legend +
-      theme(legend.position = "bottom")
+      # クラスター数が多いと凡例が巨大になり描画領域が足りずエラーになるため、
+      # 多い場合は凡例を非表示（プロット上のラベルで識別できる）
+      theme(legend.position = if (n_lev > 30) "none" else "bottom")
     lin_cols <- lineage_colors_or_null(obj@meta.data[[group_var]])
     if (!is.null(lin_cols)) p <- p + scale_color_manual(values = lin_cols)
     # ラベルは自前で repel 描画（max.overlaps=Inf で全ラベル表示・重なり回避）。
