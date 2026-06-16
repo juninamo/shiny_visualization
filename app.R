@@ -296,6 +296,9 @@ i18n <- list(
     comp_no_cat          = "カテゴリ変数が見つかりません。",
 
     # Heatmap / Dot plot 共通
+    ref_settings_label   = "リファレンス設定",
+    ref_marker_cluster   = "クラスター変数 (リファレンス)",
+    ref_draw_clusters    = "描画するクラスター (リファレンス)",
     marker_settings      = "マーカー設定",
     marker_set           = "マーカーセット",
     marker_cluster       = "クラスター変数",
@@ -397,6 +400,9 @@ i18n <- list(
     comp_no_cat          = "No categorical variables found.",
 
     # Heatmap / Dot plot shared
+    ref_settings_label   = "Reference settings",
+    ref_marker_cluster   = "Cluster Variable (reference)",
+    ref_draw_clusters    = "Clusters to plot (reference)",
     marker_settings      = "Marker Settings",
     marker_set           = "Marker Set",
     marker_cluster       = "Cluster Variable",
@@ -1177,19 +1183,24 @@ server <- function(input, output, session) {
 
   # --- アクティブ/リファレンスの2プロットを左右に並べるUI（個別サイズ） ---
   # have_ref = FALSE なら active 単独。各パネルにデータセット名ラベル。
-  side_by_side_ui <- function(active_out, ref_out, have_ref) {
+  side_by_side_ui <- function(active_out, ref_out, have_ref, plotly = FALSE) {
+    out_fn <- if (plotly) {
+      function(id, height, width) plotly::plotlyOutput(id, height = height, width = width)
+    } else {
+      function(id, height, width) plotOutput(id, height = height, width = width)
+    }
     if (!have_ref) {
-      return(plotOutput(active_out, height = act_h(), width = act_w()))
+      return(out_fn(active_out, act_h(), act_w()))
     }
     div(
       style = "display:flex; gap:14px; overflow-x:auto; align-items:flex-start;",
       div(
         h6(active_name(), class = "text-center text-muted mb-1"),
-        plotOutput(active_out, height = act_h(), width = act_w())
+        out_fn(active_out, act_h(), act_w())
       ),
       div(
         h6(ref_name() %||% "", class = "text-center text-muted mb-1"),
-        plotOutput(ref_out, height = ref_h(), width = ref_w())
+        out_fn(ref_out, ref_h(), ref_w())
       )
     )
   }
@@ -1386,6 +1397,8 @@ server <- function(input, output, session) {
           ),
           # 描画するクラスター（選択した範囲内で割合を再計算）
           uiOutput("comp_clusters_ui"),
+          # リファレンス用のクラスター選択（比較時のみ）
+          ref_cluster_controls_ui("comp"),
           fluidRow(
             column(12,
               radioButtons("comp_color_scheme", t("comp_color_scheme"),
@@ -1426,13 +1439,17 @@ server <- function(input, output, session) {
   })
 
   # 組成プロットを1データセットから構築
-  build_comp <- function(obj, interactive = FALSE) {
+  # fill_var/clusters_sel を引数化（active と reference で別々のクラスター選択に対応）
+  build_comp <- function(obj, interactive = FALSE,
+                         fill_var = input$comp_cluster,
+                         clusters_sel = input$comp_clusters_sel) {
     pt <- plot_theme()
     meta <- obj@meta.data
 
-    fill_var <- input$comp_cluster
     x_var <- input$comp_x
-    if (!all(c(fill_var, x_var) %in% names(meta))) return(empty_panel(t("ref_missing")))
+    if (is.null(fill_var) || !all(c(fill_var, x_var) %in% names(meta))) {
+      return(empty_panel(t("ref_missing")))
+    }
     facet_vars <- input$comp_facets
     facet_vars <- facet_vars[facet_vars %in% names(meta)]
     group_vars <- unique(c(x_var, facet_vars))
@@ -1442,7 +1459,7 @@ server <- function(input, output, session) {
     df <- meta[key_cols]
     for (cc in key_cols) df[[cc]] <- as.character(df[[cc]])
     # 描画クラスターに限定（選択範囲内で割合を再計算 → 例: T細胞内での割合）
-    sel_clusters <- selected_clusters("comp", obj, fill_var)
+    sel_clusters <- selected_clusters_v(clusters_sel, obj, fill_var)
     df <- df[df[[fill_var]] %in% sel_clusters, , drop = FALSE]
     if (nrow(df) == 0) return(empty_panel(t("ref_missing")))
     counts <- aggregate(list(n = rep(1L, nrow(df))), by = df, FUN = sum)
@@ -1522,7 +1539,10 @@ server <- function(input, output, session) {
     req(seurat_obj(), input$comp_cluster, input$comp_x)
     rb <- ref_obj()
     pa <- build_comp(seurat_obj())
-    pr <- if (!is.null(rb)) build_comp(rb) else NULL
+    pr <- if (!is.null(rb)) {
+      build_comp(rb, fill_var = ref_tab_cluster("comp"),
+                 clusters_sel = input$comp_clusters_sel_ref)
+    } else NULL
     combine_gg(pa, pr, active_name(), ref_name())
   }, ignoreInit = TRUE)
 
@@ -1532,8 +1552,11 @@ server <- function(input, output, session) {
   # インタラクティブ版（バーにホバーでクラスター名・割合を表示）
   # リファレンス比較時は2つの独立した plotly を左右に並べる（subplot は facet と相性が悪い）
   if (requireNamespace("plotly", quietly = TRUE)) {
-    comp_gg_titled <- function(obj, title = NULL) {
-      p <- build_comp(obj, interactive = TRUE)
+    comp_gg_titled <- function(obj, title = NULL,
+                               fill_var = input$comp_cluster,
+                               clusters_sel = input$comp_clusters_sel) {
+      p <- build_comp(obj, interactive = TRUE, fill_var = fill_var,
+                      clusters_sel = clusters_sel)
       if (!is.null(title)) p <- p + ggtitle(title)
       gp <- plotly::ggplotly(p, tooltip = "text")
       # スタックは factor 反転で上端=系統先頭。凡例も系統先頭が上に来るよう反転。
@@ -1547,7 +1570,9 @@ server <- function(input, output, session) {
     comp_plotly_ref_obj <- eventReactive(input$comp_run, {
       rb <- ref_obj()
       if (is.null(rb)) return(NULL)
-      comp_gg_titled(rb, ref_name())
+      comp_gg_titled(rb, ref_name(),
+                     fill_var = ref_tab_cluster("comp"),
+                     clusters_sel = input$comp_clusters_sel_ref)
     }, ignoreInit = TRUE)
 
     output$comp_plotly     <- plotly::renderPlotly({ comp_plotly_obj() })
@@ -1643,6 +1668,8 @@ server <- function(input, output, session) {
         gene_block,
         # 描画するクラスターの選択（クラスター変数に追従）
         uiOutput(paste0(prefix, "_clusters_ui")),
+        # リファレンス用のクラスター選択（比較時のみ）
+        ref_cluster_controls_ui(prefix),
         extra
       )
     )
@@ -1694,10 +1721,63 @@ server <- function(input, output, session) {
 
   # --- 選択中の描画クラスター（未指定なら全クラスター） ---
   selected_clusters <- function(prefix, obj, cluster_var) {
-    sel <- input[[paste0(prefix, "_clusters_sel")]]
+    selected_clusters_v(input[[paste0(prefix, "_clusters_sel")]], obj, cluster_var)
+  }
+  # sel ベクトルを直接受け取る版（リファレンス用）
+  selected_clusters_v <- function(sel, obj, cluster_var) {
     levs <- cluster_level_order(obj@meta.data[[cluster_var]])
     if (is.null(sel) || length(sel) == 0) return(levs)
     levs[levs %in% sel]   # 並び順は cluster_level_order を維持
+  }
+
+  # --- リファレンス用のクラスター変数（タブごと） ---
+  ref_tab_cluster <- function(prefix) {
+    cols <- ref_cat_cols()
+    if (length(cols) == 0) return(NULL)
+    sel <- input[[paste0(prefix, "_cluster_ref")]]
+    if (!is.null(sel) && sel %in% cols) return(sel)
+    act <- input[[paste0(prefix, "_cluster")]]
+    if (!is.null(act) && act %in% cols) return(act)
+    if ("seurat_clusters" %in% cols) return("seurat_clusters")
+    cols[1]
+  }
+
+  # --- リファレンス用のクラスター変数＋描画クラスター選択UI（比較時のみ） ---
+  ref_cluster_controls_ui <- function(prefix) {
+    rb <- ref_obj()
+    if (is.null(rb)) return(NULL)
+    cols <- ref_cat_cols()
+    if (length(cols) == 0) return(NULL)
+    cur <- isolate(input[[paste0(prefix, "_cluster_ref")]])
+    sel <- if (!is.null(cur) && cur %in% cols) {
+      cur
+    } else {
+      act <- isolate(input[[paste0(prefix, "_cluster")]])
+      if (!is.null(act) && act %in% cols) act
+      else if ("seurat_clusters" %in% cols) "seurat_clusters" else cols[1]
+    }
+    tagList(
+      hr(),
+      h6(t("ref_settings_label"), class = "text-muted mb-2"),
+      selectInput(paste0(prefix, "_cluster_ref"), t("ref_marker_cluster"),
+                  choices = cols, selected = sel),
+      uiOutput(paste0(prefix, "_clusters_ref_ui"))
+    )
+  }
+  # リファレンスの描画クラスター サブ選択UI（ref_tab_cluster に追従）
+  ref_cluster_select_ui <- function(prefix) {
+    rb <- ref_obj()
+    if (is.null(rb)) return(NULL)
+    cvar <- ref_tab_cluster(prefix)
+    if (is.null(cvar) || !(cvar %in% names(rb@meta.data))) return(NULL)
+    levs <- cluster_level_order(rb@meta.data[[cvar]])
+    prev <- isolate(input[[paste0(prefix, "_clusters_sel_ref")]])
+    sel <- if (!is.null(prev) && length(prev) > 0 && all(prev %in% levs)) prev else levs
+    selectizeInput(
+      paste0(prefix, "_clusters_sel_ref"), t("ref_draw_clusters"),
+      choices = levs, selected = sel, multiple = TRUE,
+      options = list(plugins = list("remove_button"))
+    )
   }
 
   # --- マーカーセットの平均発現マトリクス (gene x cluster) を計算 ---
@@ -1725,6 +1805,10 @@ server <- function(input, output, session) {
   output$hm_clusters_ui   <- renderUI({ cluster_select_ui("hm") })
   output$dot_clusters_ui  <- renderUI({ cluster_select_ui("dot") })
   output$comp_clusters_ui <- renderUI({ cluster_select_ui("comp") })
+  # リファレンス側のサブ選択
+  output$hm_clusters_ref_ui   <- renderUI({ ref_cluster_select_ui("hm") })
+  output$dot_clusters_ref_ui  <- renderUI({ ref_cluster_select_ui("dot") })
+  output$comp_clusters_ref_ui <- renderUI({ ref_cluster_select_ui("comp") })
 
   # 描画実行ボタン（自動描画せず、押したときだけ描画）
   plot_run_btn <- function(id) {
@@ -1781,12 +1865,13 @@ server <- function(input, output, session) {
 
   # 「描画」ボタンを押したときだけ計算（自動描画しない）
   # 1データセットの平均発現マトリクス（Z-score・クリップ済み）を構築
-  build_hm_mat <- function(obj) {
+  build_hm_mat <- function(obj, cluster_var = input$hm_cluster,
+                           clusters_sel = input$hm_clusters_sel) {
     genes <- resolve_marker_genes("hm")
     if (length(genes) == 0) return(NULL)
-    if (!(input$hm_cluster %in% names(obj@meta.data))) return(NULL)
-    clusters <- selected_clusters("hm", obj, input$hm_cluster)
-    avg <- marker_avg_matrix(obj, input$hm_cluster, genes, clusters)
+    if (is.null(cluster_var) || !(cluster_var %in% names(obj@meta.data))) return(NULL)
+    clusters <- selected_clusters_v(clusters_sel, obj, cluster_var)
+    avg <- marker_avg_matrix(obj, cluster_var, genes, clusters)
     if (is.null(avg) || nrow(avg) == 0) return(NULL)
     mat <- avg
     if (isTRUE(input$hm_scale)) {
@@ -1814,6 +1899,16 @@ server <- function(input, output, session) {
     )$gtable
   }
 
+  # grob を renderPlot で確実にブラウザ側デバイスへ描く。
+  # ggplotify があれば ggplot 化して return（最も確実）。無ければ grid.draw。
+  draw_grob <- function(g) {
+    if (requireNamespace("ggplotify", quietly = TRUE)) {
+      ggplotify::as.ggplot(g)
+    } else {
+      grid::grid.newpage(); grid::grid.draw(g); NULL
+    }
+  }
+
   heatmap_spec <- eventReactive(input$hm_run, {
     req(seurat_obj(), input$hm_cluster,
         requireNamespace("pheatmap", quietly = TRUE))
@@ -1821,7 +1916,10 @@ server <- function(input, output, session) {
     validate(need(!is.null(ma) && nrow(ma) > 0, t("hm_no_genes")))
     rb <- ref_obj()
     list(active = ma,
-         ref = if (!is.null(rb)) build_hm_mat(rb) else NULL,
+         ref = if (!is.null(rb)) {
+           build_hm_mat(rb, cluster_var = ref_tab_cluster("hm"),
+                        clusters_sel = input$hm_clusters_sel_ref)
+         } else NULL,
          ref_present = !is.null(rb),
          names = c(active_name(), ref_name() %||% ""),
          cluster_rows = isTRUE(input$hm_cluster_rows),
@@ -1831,7 +1929,7 @@ server <- function(input, output, session) {
   output$heatmap_plot <- renderPlot({
     spec <- heatmap_spec()
     g <- hm_grob(spec$active, spec$names[1], spec$cluster_rows, spec$cluster_cols)
-    grid::grid.newpage(); grid::grid.draw(g)
+    draw_grob(g)
   }, bg = "white")
 
   output$heatmap_plot_ref <- renderPlot({
@@ -1842,7 +1940,7 @@ server <- function(input, output, session) {
     } else {
       hm_grob(spec$ref, spec$names[2], spec$cluster_rows, spec$cluster_cols)
     }
-    grid::grid.newpage(); grid::grid.draw(g)
+    draw_grob(g)
   }, bg = "white")
 
   # ==========================================================================
@@ -1878,13 +1976,19 @@ server <- function(input, output, session) {
   output$dotplot_plot_ui <- renderUI({
     if (!data_loaded()) return(NULL)
     if ((input$dot_run %||% 0) == 0) return(run_hint_ui())
-    side_by_side_ui("dotplot_plot", "dotplot_plot_ref", !is.null(ref_obj()))
+    if (requireNamespace("plotly", quietly = TRUE)) {
+      side_by_side_ui("dot_plotly", "dot_plotly_ref", !is.null(ref_obj()), plotly = TRUE)
+    } else {
+      side_by_side_ui("dotplot_plot", "dotplot_plot_ref", !is.null(ref_obj()))
+    }
   })
 
   # 「描画」ボタンを押したときだけ計算
-  build_dot <- function(obj) {
+  build_dot <- function(obj, cluster_var = input$dot_cluster,
+                        clusters_sel = input$dot_clusters_sel,
+                        interactive = FALSE) {
     pt <- plot_theme()
-    if (!(input$dot_cluster %in% names(obj@meta.data))) return(empty_panel(t("ref_missing")))
+    if (is.null(cluster_var) || !(cluster_var %in% names(obj@meta.data))) return(empty_panel(t("ref_missing")))
 
     set_df <- resolve_marker_set_df("dot")
     genes_all <- unique(set_df$feature)
@@ -1892,12 +1996,12 @@ server <- function(input, output, session) {
     mat <- get_expr_matrix(obj, genes_all)     # genes x cells
     if (is.null(mat) || nrow(mat) == 0) return(empty_panel(t("ref_missing")))
 
-    labels <- as.character(obj@meta.data[[input$dot_cluster]])
+    labels <- as.character(obj@meta.data[[cluster_var]])
     keep <- !is.na(labels)
     mat <- mat[, keep, drop = FALSE]
     labels <- labels[keep]
     # 描画クラスターを選択・系統順に並べ、対象細胞だけに限定
-    cl_levels <- selected_clusters("dot", obj, input$dot_cluster)
+    cl_levels <- selected_clusters_v(clusters_sel, obj, cluster_var)
     cl_levels <- cl_levels[cl_levels %in% labels]
     if (length(cl_levels) == 0) return(empty_panel(t("ref_missing")))
     sel_idx <- labels %in% cl_levels
@@ -1934,16 +2038,29 @@ server <- function(input, output, session) {
     dot$id <- factor(dot$id, levels = cl_levels)
     dot$group <- factor(dot$group, levels = unique(grp_map$group))
 
+    # ホバー用テキスト（遺伝子・クラスター・発現割合・平均発現）
+    dot$.hover <- paste0(
+      "gene: ", as.character(dot$feature),
+      "\n", cluster_var, ": ", as.character(dot$id),
+      "\n", t("dot_pct"), ": ", sprintf("%.1f%%", dot$pct.exp),
+      "\n", t("dot_avg"), ": ", sprintf("%.2f", dot$avg.exp.scaled)
+    )
+    pt_aes <- if (interactive) {
+      aes(size = pct.exp, color = avg.exp.scaled, text = .hover)
+    } else {
+      aes(size = pct.exp, color = avg.exp.scaled)
+    }
+
     p <- ggplot(dot, aes(x = feature, y = id)) +
-      geom_point(aes(size = pct.exp, color = avg.exp.scaled)) +
+      geom_point(mapping = pt_aes) +
       scale_radius(range = c(0, input$dot_scale), limits = c(0, 100)) +
       scale_color_gradient2(midpoint = 0, low = "#3C5488FF",
                             mid = "grey90", high = "#DC0000FF", space = "Lab") +
-      labs(x = NULL, y = input$dot_cluster,
+      labs(x = NULL, y = cluster_var,
            size = t("dot_pct"), color = t("dot_avg")) +
       theme_minimal(base_size = 12) +
       theme(
-        axis.text.x = element_text(angle = 45, hjust = 1),
+        axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5),
         plot.background = element_rect(fill = pt$bg, color = NA),
         panel.background = element_rect(fill = pt$bg, color = NA),
         panel.grid = element_line(color = paste0(pt$fg2, "30")),
@@ -1973,11 +2090,30 @@ server <- function(input, output, session) {
   dot_ref_obj <- eventReactive(input$dot_run, {
     rb <- ref_obj()
     if (is.null(rb)) return(NULL)
-    build_dot(rb)
+    build_dot(rb, cluster_var = ref_tab_cluster("dot"),
+              clusters_sel = input$dot_clusters_sel_ref)
   }, ignoreInit = TRUE)
 
   output$dotplot_plot     <- renderPlot({ dot_active_obj() }, bg = "transparent")
   output$dotplot_plot_ref <- renderPlot({ req(dot_ref_obj()) }, bg = "transparent")
+
+  # インタラクティブ版（ドットにホバーで発現割合などを表示）
+  if (requireNamespace("plotly", quietly = TRUE)) {
+    dot_plotly_active <- eventReactive(input$dot_run, {
+      req(seurat_obj(), input$dot_cluster)
+      plotly::ggplotly(build_dot(seurat_obj(), interactive = TRUE), tooltip = "text")
+    }, ignoreInit = TRUE)
+    dot_plotly_refobj <- eventReactive(input$dot_run, {
+      rb <- ref_obj()
+      if (is.null(rb)) return(NULL)
+      plotly::ggplotly(
+        build_dot(rb, cluster_var = ref_tab_cluster("dot"),
+                  clusters_sel = input$dot_clusters_sel_ref, interactive = TRUE),
+        tooltip = "text")
+    }, ignoreInit = TRUE)
+    output$dot_plotly     <- plotly::renderPlotly({ dot_plotly_active() })
+    output$dot_plotly_ref <- plotly::renderPlotly({ req(dot_plotly_refobj()) })
+  }
 
   # ==========================================================================
   # DEG解析

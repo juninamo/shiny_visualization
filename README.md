@@ -27,19 +27,19 @@ feature immediately.
 - **Multi-dataset comparison** — load several `.rds` files at once, pick an
   **active** and a **reference** dataset, and every tab (Violin, Feature/Group
   UMAP, Composition, Heatmap, Dot Plot) renders the two **side by side**. The
-  **group variable**, **point size**, **plot height** and **plot width** can be
-  set **independently** for the active and reference datasets. Set the reference
-  to *(none)* for a single view.
+  **group / cluster variable**, **clusters to draw**, **point size**, **plot
+  height** and **plot width** can be set **independently** for the active and
+  reference datasets. Set the reference to *(none)* for a single view.
 - **Pre-registered marker sets** — curated panels (`Cell type`, `T cell`, `B cell`,
   `Myeloid`, `NK / ILC`, `Stromal / Tissue`, `All curated`) drive the Heatmap and
   Dot Plot tabs. On the Heatmap/Dot Plot/DEG tabs you can use a *set*, a
   *set + your own genes*, or *only your own genes*.
 - **Run on demand** — Composition, Heatmap, and Dot Plot render only when you
   click their **Plot** button (they don't recompute on every option change).
-- **Interactive plots** — on the DEG tab, hover a volcano point to see the gene
-  and its stats; on the Composition tab, hover a bar segment to see the cluster,
-  the x-axis value, and its proportion (via plotly; both fall back to static
-  plots if plotly is absent).
+- **Interactive plots** — hover to inspect: a DEG volcano point shows the gene
+  and stats; a Composition bar segment shows the cluster, x value and proportion;
+  a Dot Plot dot shows the gene, cluster, percent expressed and scaled mean (via
+  plotly; all fall back to static plots if plotly is absent).
 - **Dynamic lineage palette & ordering** — when cluster labels follow the
   `<number>_<Lineage>` convention (e.g. `0_B_Plasma`, `2_TNK_ILC`), the app
   automatically (a) assigns a light→dark color gradient within each lineage and
