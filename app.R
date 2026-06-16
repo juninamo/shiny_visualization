@@ -690,7 +690,7 @@ server <- function(input, output, session) {
       h5(t("plot_settings"), class = "text-primary mb-2"),
 
       sliderInput("pt_size", t("pt_size"), min = 0, max = 2, value = 0.3, step = 0.1),
-      sliderInput("plot_height", t("plot_height"), min = 400, max = 1200, value = 600, step = 50),
+      sliderInput("plot_height", t("plot_height"), min = 400, max = 3000, value = 600, step = 50),
       sliderInput("plot_width", t("plot_width"), min = 400, max = 4000, value = 800, step = 50),
 
       # リファレンス用のプロット設定（比較時のみ表示）
@@ -1168,7 +1168,7 @@ server <- function(input, output, session) {
       h6(t("ref_plot_settings"), class = "text-primary mb-2"),
       sliderInput("ref_pt_size", t("ref_pt_size"), min = 0, max = 2,
                   value = isolate(input$ref_pt_size) %||% (isolate(input$pt_size) %||% 0.3), step = 0.1),
-      sliderInput("ref_plot_height", t("ref_plot_height"), min = 400, max = 1200,
+      sliderInput("ref_plot_height", t("ref_plot_height"), min = 400, max = 3000,
                   value = isolate(input$ref_plot_height) %||% (isolate(input$plot_height) %||% 600), step = 50),
       sliderInput("ref_plot_width", t("ref_plot_width"), min = 400, max = 4000,
                   value = isolate(input$ref_plot_width) %||% (isolate(input$plot_width) %||% 800), step = 50)
