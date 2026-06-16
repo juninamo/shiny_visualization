@@ -1297,13 +1297,28 @@ server <- function(input, output, session) {
   output$comp_plot_ui <- renderUI({
     if (!data_loaded()) return(NULL)
     if ((input$comp_run %||% 0) == 0) return(run_hint_ui())
-    plotOutput("comp_plot",
-               height = paste0(input$plot_height, "px"),
-               width = paste0(input$plot_width, "px"))
+    # plotly があればインタラクティブ（バーにホバーでクラスター表示）
+    if (requireNamespace("plotly", quietly = TRUE)) {
+      h <- paste0(input$plot_height, "px")
+      if (is.null(ref_obj())) {
+        plotly::plotlyOutput("comp_plotly", height = h,
+                             width = paste0(input$plot_width, "px"))
+      } else {
+        # リファレンス比較は2つのplotlyを左右に並べる
+        fluidRow(
+          column(6, plotly::plotlyOutput("comp_plotly", height = h)),
+          column(6, plotly::plotlyOutput("comp_plotly_ref", height = h))
+        )
+      }
+    } else {
+      plotOutput("comp_plot",
+                 height = paste0(input$plot_height, "px"),
+                 width = paste0(input$plot_width, "px"))
+    }
   })
 
   # 組成プロットを1データセットから構築
-  build_comp <- function(obj) {
+  build_comp <- function(obj, interactive = FALSE) {
     pt <- plot_theme()
     meta <- obj@meta.data
 
@@ -1347,9 +1362,18 @@ server <- function(input, output, session) {
     missing <- setdiff(levs, names(fill_colors))
     if (length(missing) > 0) fill_colors[missing] <- "grey60"
 
+    # ホバー用テキスト（クラスター名・X値・割合）
+    counts$.hover <- paste0(
+      fill_var, ": ", as.character(counts[[fill_var]]),
+      "\n", x_var, ": ", as.character(counts[[x_var]]),
+      "\n", t("comp_yaxis"), ": ", sprintf("%.1f%%", counts$proportion * 100),
+      " (n=", counts$n, ")"
+    )
+
+    bar_aes <- if (interactive) aes(text = .hover) else aes()
     p <- ggplot(counts, aes(x = .data[[x_var]], y = proportion,
                             fill = .data[[fill_var]])) +
-      geom_bar(stat = "identity") +
+      geom_bar(mapping = bar_aes, stat = "identity") +
       scale_fill_manual(values = fill_colors) +
       scale_y_continuous(labels = scales::percent_format()) +
       labs(title = t("comp_title"), x = x_var, y = t("comp_yaxis"), fill = fill_var) +
@@ -1367,10 +1391,11 @@ server <- function(input, output, session) {
         plot.title = element_text(size = 16, face = "bold", color = pt$accent)
       )
 
-    # --- ファセット (ggh4x があれば nested、なければ facet_grid) ---
+    # --- ファセット ---
+    # interactive(plotly)時は facet_grid（ggh4x::facet_nested は ggplotly 非対応）
     if (length(facet_vars) > 0) {
       fct <- stats::as.formula(paste("~", paste(facet_vars, collapse = " + ")))
-      if (requireNamespace("ggh4x", quietly = TRUE)) {
+      if (!interactive && requireNamespace("ggh4x", quietly = TRUE)) {
         p <- p + ggh4x::facet_nested(fct, scales = "free_x",
                                      space = "free_x", nest_line = TRUE)
       } else {
@@ -1390,7 +1415,31 @@ server <- function(input, output, session) {
     combine_gg(pa, pr, active_name(), ref_name())
   }, ignoreInit = TRUE)
 
+  # 静的版（plotly が無い場合のフォールバック）
   output$comp_plot <- renderPlot({ comp_plot_obj() }, bg = "transparent")
+
+  # インタラクティブ版（バーにホバーでクラスター名・割合を表示）
+  # リファレンス比較時は2つの独立した plotly を左右に並べる（subplot は facet と相性が悪い）
+  if (requireNamespace("plotly", quietly = TRUE)) {
+    comp_gg_titled <- function(obj, title = NULL) {
+      p <- build_comp(obj, interactive = TRUE)
+      if (!is.null(title)) p <- p + ggtitle(title)
+      plotly::ggplotly(p, tooltip = "text")
+    }
+    comp_plotly_obj <- eventReactive(input$comp_run, {
+      req(seurat_obj(), input$comp_cluster, input$comp_x)
+      title <- if (is.null(ref_obj())) NULL else active_name()
+      comp_gg_titled(seurat_obj(), title)
+    }, ignoreInit = TRUE)
+    comp_plotly_ref_obj <- eventReactive(input$comp_run, {
+      rb <- ref_obj()
+      if (is.null(rb)) return(NULL)
+      comp_gg_titled(rb, ref_name())
+    }, ignoreInit = TRUE)
+
+    output$comp_plotly     <- plotly::renderPlotly({ comp_plotly_obj() })
+    output$comp_plotly_ref <- plotly::renderPlotly({ req(comp_plotly_ref_obj()) })
+  }
 
   # ==========================================================================
   # マーカー設定UI（Heatmap / Dot plot 共通）
