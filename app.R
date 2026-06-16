@@ -679,7 +679,7 @@ ui <- page_sidebar(
 
   # --- サイドバー ---
   sidebar = sidebar(
-    width = 320,
+    width = 460,
 
     # ダーク/ブライトモード切替
     input_dark_mode(id = "dark_mode", mode = "dark"),
