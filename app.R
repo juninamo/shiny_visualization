@@ -2156,7 +2156,9 @@ server <- function(input, output, session) {
   # pheatmap は grid に直接描画してしまい（RStudio のプロットペインに出る等）
   # Shiny のデバイス制御と相性が悪いため、ggplot で描く。
   # mat: genes x clusters（Z-score 済み）。行=クラスター, 列=遺伝子 で表示。
-  build_hm_ggplot <- function(mat, main, cluster_rows, cluster_cols) {
+  # row_source: クラスター名 -> データセット名 の名前付きベクトル。指定すると
+  # 左端にデータセット別のアノテーションカラー列を追加する（統合ヒートマップ用）。
+  build_hm_ggplot <- function(mat, main, cluster_rows, cluster_cols, row_source = NULL) {
     pt <- plot_theme()
     m <- base::t(mat)                      # clusters x genes
     row_order <- rownames(m)               # clusters
@@ -2167,17 +2169,41 @@ server <- function(input, output, session) {
     if (isTRUE(cluster_cols) && ncol(m) > 2) {
       col_order <- colnames(m)[stats::hclust(stats::dist(base::t(m)))$order]
     }
+
+    has_ann <- !is.null(row_source) && requireNamespace("ggnewscale", quietly = TRUE)
+    ann_lab <- "▮"                    # アノテーション列のラベル（細い縦棒記号）
+    gene_levels <- if (has_ann) c(ann_lab, col_order) else col_order
+
     df <- data.frame(
       cluster = factor(rep(rownames(m), times = ncol(m)), levels = row_order),
-      gene    = factor(rep(colnames(m), each = nrow(m)),  levels = col_order),
+      gene    = factor(rep(colnames(m), each = nrow(m)),  levels = gene_levels),
       value   = as.vector(m),
       stringsAsFactors = FALSE
     )
     lim <- max(abs(df$value), na.rm = TRUE)
-    ggplot(df, aes(x = gene, y = cluster, fill = value)) +
-      geom_tile(color = "white", linewidth = 0.3) +
+    p <- ggplot() +
+      geom_tile(data = df, aes(x = gene, y = cluster, fill = value),
+                color = "white", linewidth = 0.3) +
       scale_fill_gradient2(low = "#0072B5FF", mid = "white", high = "#BC3C29FF",
-                           midpoint = 0, limits = c(-lim, lim), name = NULL) +
+                           midpoint = 0, limits = c(-lim, lim), name = NULL)
+
+    if (has_ann) {
+      srcs <- unique(unname(row_source))
+      src_pal <- setNames(c("#4C78A8", "#F58518", "#54A24B", "#E45756")[seq_along(srcs)], srcs)
+      ann <- data.frame(
+        cluster = factor(rownames(m), levels = row_order),
+        gene    = factor(ann_lab, levels = gene_levels),
+        src     = factor(unname(row_source[rownames(m)]), levels = srcs),
+        stringsAsFactors = FALSE
+      )
+      p <- p +
+        ggnewscale::new_scale_fill() +
+        geom_tile(data = ann, aes(x = gene, y = cluster, fill = src),
+                  color = "white", linewidth = 0.3) +
+        scale_fill_manual(values = src_pal, name = "dataset", drop = FALSE)
+    }
+
+    p +
       labs(title = main, x = NULL, y = NULL) +
       theme_minimal(base_size = 11) +
       theme(
@@ -2189,6 +2215,7 @@ server <- function(input, output, session) {
         text = element_text(color = pt$fg),
         axis.text = element_text(color = pt$fg2),
         legend.text = element_text(color = pt$fg),
+        legend.title = element_text(color = pt$fg),
         plot.title = element_text(size = 14, face = "bold", color = pt$accent)
       )
   }
@@ -2231,7 +2258,10 @@ server <- function(input, output, session) {
                              isTRUE(input$hm_scale))
       validate(need(!is.null(combined) && nrow(combined) > 0 && ncol(combined) >= 2,
                     t("hm_no_genes")))
+      # 各列(クラスター)のデータセット名を "名前 | クラスター" 接頭辞から取得
+      src <- sub(" \\| .*$", "", colnames(combined))
       list(combine = TRUE, combined = combined,
+           source = setNames(src, colnames(combined)),
            cluster_cols = isTRUE(input$hm_cluster_cols))
     } else {
       ma <- build_hm_mat(seurat_obj())
@@ -2251,8 +2281,9 @@ server <- function(input, output, session) {
   output$heatmap_plot <- renderPlot({
     spec <- heatmap_spec()
     if (isTRUE(spec$combine)) {
-      # 統合モード: 行(クラスター)を必ず階層クラスタリングして似たもの同士を隣接
-      build_hm_ggplot(spec$combined, "", TRUE, spec$cluster_cols)
+      # 統合モード: 行(クラスター)を必ず階層クラスタリングして似たもの同士を隣接。
+      # 左端にデータセット別アノテーションカラーを表示。
+      build_hm_ggplot(spec$combined, "", TRUE, spec$cluster_cols, row_source = spec$source)
     } else {
       build_hm_ggplot(spec$active, spec$names[1], spec$cluster_rows, spec$cluster_cols)
     }

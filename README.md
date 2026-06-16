@@ -29,8 +29,9 @@ feature immediately.
   reference datasets. Set the reference to *(none)* for a single view. The
   Heatmap also has a **Combine with reference** option that plots the active and
   reference clusters in **one** hierarchically-clustered heatmap, so similar
-  clusters from the two datasets sit next to each other (handy for transferring
-  cell-type names across datasets).
+  clusters from the two datasets sit next to each other, with a **dataset color
+  bar** down the left so you can tell active vs reference rows at a glance (handy
+  for transferring cell-type names across datasets).
 - **Pre-registered marker sets** — curated panels (`Cell type`, `T cell`, `B cell`,
   `Myeloid`, `NK / ILC`, `Stromal / Tissue`, `All curated`) drive the Heatmap and
   Dot Plot tabs. On the Heatmap/Dot Plot/DEG tabs you can use a *set*, a
