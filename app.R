@@ -1440,7 +1440,10 @@ server <- function(input, output, session) {
 
     # --- クラスター(塗り分け)とX軸を系統順 factor に ---
     levs <- cluster_level_order(unique(counts[[fill_var]]))
-    counts[[fill_var]] <- factor(counts[[fill_var]], levels = levs)
+    # plotly はスタックの先頭(=factorの最初)を下に積むため、interactive 時は
+    # factor を反転し凡例を反転して戻す → バーの上端と凡例の先頭を一致させる
+    fill_levels <- if (interactive) rev(levs) else levs
+    counts[[fill_var]] <- factor(counts[[fill_var]], levels = fill_levels)
     counts[[x_var]] <- factor(counts[[x_var]],
                               levels = cluster_level_order(unique(counts[[x_var]])))
 
@@ -1520,7 +1523,9 @@ server <- function(input, output, session) {
     comp_gg_titled <- function(obj, title = NULL) {
       p <- build_comp(obj, interactive = TRUE)
       if (!is.null(title)) p <- p + ggtitle(title)
-      plotly::ggplotly(p, tooltip = "text")
+      gp <- plotly::ggplotly(p, tooltip = "text")
+      # スタックは factor 反転で上端=系統先頭。凡例も系統先頭が上に来るよう反転。
+      plotly::layout(gp, legend = list(traceorder = "reversed"))
     }
     comp_plotly_obj <- eventReactive(input$comp_run, {
       req(seurat_obj(), input$comp_cluster, input$comp_x)
