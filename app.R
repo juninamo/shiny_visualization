@@ -339,6 +339,7 @@ i18n <- list(
     mk_feat_custom       = "自分で選択のみ",
     mk_custom_genes      = "遺伝子を選択",
     mk_custom_group      = "カスタム",
+    mk_set_genes         = "セット内の遺伝子（不要なものは削除可）",
     plot_run             = "描画",
     plot_run_hint        = "設定後「描画」ボタンを押してください",
     hm_scale             = "Z-score (行スケーリング)",
@@ -447,6 +448,7 @@ i18n <- list(
     mk_feat_custom       = "Custom only",
     mk_custom_genes      = "Select genes",
     mk_custom_group      = "Custom",
+    mk_set_genes         = "Genes in set (remove any you don't need)",
     plot_run             = "Plot",
     plot_run_hint        = "Configure options, then click 'Plot'",
     hm_scale             = "Z-score (row scaling)",
@@ -1702,7 +1704,9 @@ server <- function(input, output, session) {
           fluidRow(column(12,
             selectInput(id_set, t("marker_set"),
                         choices = names(marker_sets), selected = set_sel)
-          ))
+          )),
+          # セット内の遺伝子（不要なものを削除可能）
+          uiOutput(paste0(prefix, "_set_genes_ui"))
         ),
         conditionalPanel(
           sprintf("input.%s == 'custom' || input.%s == 'set_custom'", id_mode, id_mode),
@@ -1757,7 +1761,11 @@ server <- function(input, output, session) {
     setn <- input[[paste0(prefix, "_set")]]
     parts <- list()
     if (mode %in% c("set", "set_custom") && !is.null(setn)) {
-      parts[[length(parts) + 1]] <- marker_set_to_df(marker_sets[[setn]])
+      sdf <- marker_set_to_df(marker_sets[[setn]])
+      # ユーザーがセット内から削除した遺伝子を反映（kept が NULL のときは全て）
+      kept <- input[[paste0(prefix, "_set_genes")]]
+      if (!is.null(kept)) sdf <- sdf[sdf$feature %in% kept, , drop = FALSE]
+      parts[[length(parts) + 1]] <- sdf
     }
     if (mode %in% c("custom", "set_custom")) {
       cg <- input[[paste0(prefix, "_custom_genes")]]
@@ -1778,6 +1786,22 @@ server <- function(input, output, session) {
   resolve_marker_genes <- function(prefix) {
     unique(resolve_marker_set_df(prefix)$feature)
   }
+
+  # --- セット内の遺伝子の編集UI（選んだセットの遺伝子を削除可能） ---
+  # セットを変えると新しいセットの全遺伝子で再初期化される。
+  set_genes_select_ui <- function(prefix) {
+    setn <- input[[paste0(prefix, "_set")]]
+    if (is.null(setn) || !(setn %in% names(marker_sets))) return(NULL)
+    all_genes <- unique(marker_set_to_df(marker_sets[[setn]])$feature)
+    id_sel <- paste0(prefix, "_set_genes")
+    prev <- isolate(input[[id_sel]])
+    sel <- if (!is.null(prev) && length(prev) > 0 && all(prev %in% all_genes)) prev else all_genes
+    selectizeInput(id_sel, t("mk_set_genes"), choices = all_genes, selected = sel,
+                   multiple = TRUE,
+                   options = list(plugins = list("remove_button"), maxOptions = 2000))
+  }
+  output$hm_set_genes_ui  <- renderUI({ set_genes_select_ui("hm") })
+  output$dot_set_genes_ui <- renderUI({ set_genes_select_ui("dot") })
 
   # --- 描画クラスター選択UI（クラスター変数に追従、デフォルトは全選択） ---
   # 大分類(coarse)列で絞ったあとの対象クラスター（ネスト2段階選択の1段目）
