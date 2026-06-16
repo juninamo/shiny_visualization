@@ -320,6 +320,7 @@ i18n <- list(
 
     # 通知
     notify_loading      = "データを読み込み中...",
+    notify_finalizing   = "セレクタを更新中...",
     notify_not_seurat   = "選択されたファイルはSeuratオブジェクトではありません。",
     notify_no_umap      = "注意: UMAPが計算されていません。UMAP表示は利用できません。",
     notify_load_done    = "✅ 読み込み完了: %s 細胞 × %s 遺伝子",
@@ -420,6 +421,7 @@ i18n <- list(
 
     # Notifications
     notify_loading      = "Loading data...",
+    notify_finalizing   = "Updating selectors...",
     notify_not_seurat   = "The selected file is not a Seurat object.",
     notify_no_umap      = "Note: No UMAP reduction found. UMAP plots are unavailable.",
     notify_load_done    = "✅ Loaded: %s cells × %s genes",
@@ -689,7 +691,7 @@ server <- function(input, output, session) {
 
       sliderInput("pt_size", t("pt_size"), min = 0, max = 2, value = 0.3, step = 0.1),
       sliderInput("plot_height", t("plot_height"), min = 400, max = 1200, value = 600, step = 50),
-      sliderInput("plot_width", t("plot_width"), min = 400, max = 1600, value = 800, step = 50),
+      sliderInput("plot_width", t("plot_width"), min = 400, max = 4000, value = 800, step = 50),
 
       # リファレンス用のプロット設定（比較時のみ表示）
       uiOutput("ref_plot_settings_ui")
@@ -814,31 +816,40 @@ server <- function(input, output, session) {
   }
 
   # --- 複数RDSの読み込み ---
+  # withProgress を使うことで、ブロッキングする readRDS の前/最中でも
+  # 「読み込み中」インジケータがブラウザに即時表示され、完了まで残り続ける。
   observeEvent(input$load_btn, {
     req(input$rds_file)
-    showNotification(t("notify_loading"), type = "message", id = "loading")
-    tryCatch({
-      objs <- list()
-      for (f in input$rds_file) {
-        o <- readRDS(file.path(app_dir, f))
-        if (inherits(o, "Seurat")) objs[[f]] <- o
-      }
-      if (length(objs) == 0) {
-        showNotification(t("notify_not_seurat"), type = "error", id = "loading")
-        return()
-      }
-      loaded_objs(objs)
-      activate_dataset(objs[[1]])
+    files <- input$rds_file
+    n <- length(files)
+    withProgress(message = t("notify_loading"), value = 0, {
+      tryCatch({
+        objs <- list()
+        for (i in seq_along(files)) {
+          f <- files[i]
+          incProgress(0, detail = sprintf("%s (%d/%d)", f, i, n))
+          o <- readRDS(file.path(app_dir, f))
+          if (inherits(o, "Seurat")) objs[[f]] <- o
+          incProgress(1 / n)
+        }
+        if (length(objs) == 0) {
+          showNotification(t("notify_not_seurat"), type = "error", id = "loading")
+          return()
+        }
+        incProgress(0, detail = t("notify_finalizing"))
+        loaded_objs(objs)
+        activate_dataset(objs[[1]])
 
-      o1 <- objs[[1]]
-      showNotification(
-        sprintf(t("notify_load_done"),
-                format(ncol(o1), big.mark = ","),
-                format(nrow(o1), big.mark = ",")),
-        type = "message", id = "loading", duration = 5
-      )
-    }, error = function(e) {
-      showNotification(paste(t("notify_error"), e$message), type = "error", id = "loading")
+        o1 <- objs[[1]]
+        showNotification(
+          sprintf(t("notify_load_done"),
+                  format(ncol(o1), big.mark = ","),
+                  format(nrow(o1), big.mark = ",")),
+          type = "message", id = "loading", duration = 5
+        )
+      }, error = function(e) {
+        showNotification(paste(t("notify_error"), e$message), type = "error", id = "loading")
+      })
     })
   })
 
@@ -1159,7 +1170,7 @@ server <- function(input, output, session) {
                   value = isolate(input$ref_pt_size) %||% (isolate(input$pt_size) %||% 0.3), step = 0.1),
       sliderInput("ref_plot_height", t("ref_plot_height"), min = 400, max = 1200,
                   value = isolate(input$ref_plot_height) %||% (isolate(input$plot_height) %||% 600), step = 50),
-      sliderInput("ref_plot_width", t("ref_plot_width"), min = 400, max = 1600,
+      sliderInput("ref_plot_width", t("ref_plot_width"), min = 400, max = 4000,
                   value = isolate(input$ref_plot_width) %||% (isolate(input$plot_width) %||% 800), step = 50)
     )
   })
@@ -1242,7 +1253,8 @@ server <- function(input, output, session) {
       as.character(obj@meta.data[[group_var]]),
       levels = cluster_level_order(obj@meta.data[[group_var]])
     )
-    p <- VlnPlot(obj, features = input$gene, pt.size = pt_size) + pt$theme
+    p <- VlnPlot(obj, features = input$gene, pt.size = pt_size) + pt$theme +
+      theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5))
     lin_cols <- lineage_colors_or_null(levels(Idents(obj)))
     if (!is.null(lin_cols)) p <- p + scale_fill_manual(values = lin_cols)
     p
