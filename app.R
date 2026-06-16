@@ -356,6 +356,15 @@ i18n <- list(
     hm_cluster_rows      = "行をクラスタリング",
     hm_cluster_cols      = "列をクラスタリング",
     hm_combine           = "リファレンスと統合 (似たクラスターが近くに並ぶ)",
+    dot_combine          = "リファレンスと統合 (行・列をクラスタリング)",
+    corr_title           = "発現パターンの近さ: 各アクティブクラスター → 最も近いリファレンス",
+    corr_download        = "対応表をCSVでダウンロード",
+    corr_active          = "アクティブクラスター",
+    corr_best            = "最も近いリファレンス",
+    corr_cor             = "相関",
+    corr_second          = "次点リファレンス",
+    corr_margin          = "マージン(1位-2位)",
+    corr_help            = "各アクティブクラスターの平均発現プロファイル（共通遺伝子をデータセット内でZ-score化）を、各リファレンスクラスターとピアソン相関で比較し、相関が最も高いものを「最も近いリファレンス」としています。マージン = 1位の相関 − 2位の相関（大きいほど対応が明確）。",
     hm_no_genes          = "選択したマーカーがデータ内に見つかりません。",
     hm_pkg_missing       = "pheatmap パッケージが必要です: install.packages('pheatmap')",
     dot_scale            = "ドットサイズ",
@@ -492,6 +501,15 @@ i18n <- list(
     hm_cluster_rows      = "Cluster rows",
     hm_cluster_cols      = "Cluster columns",
     hm_combine           = "Combine with reference (similar clusters sit together)",
+    dot_combine          = "Combine with reference (cluster rows & columns)",
+    corr_title           = "Expression similarity: each active cluster → nearest reference",
+    corr_download        = "Download correspondence table (CSV)",
+    corr_active          = "Active cluster",
+    corr_best            = "Nearest reference",
+    corr_cor             = "Correlation",
+    corr_second          = "2nd reference",
+    corr_margin          = "Margin(1st-2nd)",
+    corr_help            = "Each active cluster's mean-expression profile (over shared genes, z-scored within its dataset) is compared to every reference cluster by Pearson correlation; the highest correlation is the 'nearest reference'. Margin = 1st − 2nd correlation (larger = more confident match).",
     hm_no_genes          = "None of the selected markers were found in the data.",
     hm_pkg_missing       = "The 'pheatmap' package is required: install.packages('pheatmap')",
     dot_scale            = "Dot size",
@@ -2318,6 +2336,10 @@ server <- function(input, output, session) {
           column(6, checkboxInput("dot_facet", t("dot_facet"),
                                   value = isolate(input$dot_facet) %||% TRUE))
         ),
+        if (!is.null(ref_obj())) {
+          checkboxInput("dot_combine", t("dot_combine"),
+                        value = isolate(input$dot_combine) %||% FALSE)
+        },
         plot_run_btn("dot_run")
       )),
       uiOutput("dotplot_plot_ui")
@@ -2327,7 +2349,20 @@ server <- function(input, output, session) {
   output$dotplot_plot_ui <- renderUI({
     if (!data_loaded()) return(NULL)
     if ((input$dot_run %||% 0) == 0) return(run_hint_ui())
-    if (requireNamespace("plotly", quietly = TRUE)) {
+    if (isTRUE(input$dot_combine) && !is.null(ref_obj())) {
+      # 統合モード: 1枚の統合ドットプロット + 対応表 + CSVダウンロード
+      tagList(
+        plotOutput("dot_combined_plot", height = act_h(), width = act_w()),
+        div(class = "mt-3",
+          h6(class = "text-primary", t("corr_title"), " ",
+             bslib::tooltip(
+               tags$span(icon("circle-question"), style = "cursor: help;"),
+               t("corr_help"), placement = "right")),
+          downloadButton("dot_corr_dl", t("corr_download"), class = "btn-outline-success btn-sm mb-2"),
+          DTOutput("dot_corr_table")
+        )
+      )
+    } else if (requireNamespace("plotly", quietly = TRUE)) {
       side_by_side_ui("dot_plotly", "dot_plotly_ref", !is.null(ref_obj()), plotly = TRUE)
     } else {
       side_by_side_ui("dotplot_plot", "dotplot_plot_ref", !is.null(ref_obj()))
@@ -2448,6 +2483,109 @@ server <- function(input, output, session) {
 
   output$dotplot_plot     <- renderPlot({ dot_active_obj() }, bg = "transparent")
   output$dotplot_plot_ref <- renderPlot({ req(dot_ref_obj()) }, bg = "transparent")
+
+  # --- 統合ドット用: クラスター×遺伝子の平均発現と発現割合 ---
+  dot_avg_pct <- function(obj, cluster_var, clusters, genes) {
+    mat <- get_expr_matrix(obj, genes)
+    if (is.null(mat) || nrow(mat) == 0) return(NULL)
+    labels <- as.character(obj@meta.data[colnames(mat), cluster_var])
+    keep <- !is.na(labels) & labels %in% clusters
+    mat <- mat[, keep, drop = FALSE]; labels <- labels[keep]
+    cls <- clusters[clusters %in% labels]
+    if (length(cls) == 0) return(NULL)
+    avg <- vapply(cls, function(cl) Matrix::rowMeans(mat[, labels == cl, drop = FALSE]),
+                  numeric(nrow(mat)))
+    pct <- vapply(cls, function(cl) Matrix::rowSums(mat[, labels == cl, drop = FALSE] > 0) /
+                                    sum(labels == cl) * 100, numeric(nrow(mat)))
+    dimnames(avg) <- list(rownames(mat), cls); dimnames(pct) <- list(rownames(mat), cls)
+    list(avg = avg, pct = pct)
+  }
+
+  # 統合ドット + 対応表（描画ボタン押下時に計算）
+  dot_combined <- eventReactive(input$dot_run, {
+    req(seurat_obj(), input$mk_cluster)
+    rb <- ref_obj(); if (is.null(rb)) return(NULL)
+    genes <- resolve_marker_genes("mk")
+    A <- dot_avg_pct(seurat_obj(), input$mk_cluster,
+                     selected_clusters("mk", seurat_obj(), input$mk_cluster), genes)
+    rcv <- ref_tab_cluster("mk")
+    R <- if (!is.null(rcv)) {
+      dot_avg_pct(rb, rcv, selected_clusters_v(input$mk_clusters_sel_ref, rb, rcv), genes)
+    } else NULL
+    if (is.null(A) || is.null(R)) return(NULL)
+    shared <- intersect(rownames(A$avg), rownames(R$avg))
+    if (length(shared) < 2) return(NULL)
+    zsc <- function(m) { z <- base::t(scale(base::t(m))); z[!is.finite(z)] <- 0; z }
+    zA <- zsc(A$avg[shared, , drop = FALSE]); zR <- zsc(R$avg[shared, , drop = FALSE])
+
+    # --- 対応表: active × ref の相関（発現パターンの近さ）---
+    cmat <- suppressWarnings(stats::cor(zA, zR))
+    cmat[!is.finite(cmat)] <- 0
+    corr <- do.call(rbind, lapply(rownames(cmat), function(ac) {
+      v <- cmat[ac, ]; ord <- order(v, decreasing = TRUE)
+      data.frame(active = ac,
+                 best = colnames(cmat)[ord[1]], cor = round(v[ord[1]], 3),
+                 second = if (length(ord) >= 2) colnames(cmat)[ord[2]] else NA,
+                 cor2 = if (length(ord) >= 2) round(v[ord[2]], 3) else NA,
+                 margin = if (length(ord) >= 2) round(v[ord[1]] - v[ord[2]], 3) else NA,
+                 stringsAsFactors = FALSE)
+    }))
+    corr <- corr[order(-corr$cor), ]
+
+    # --- 統合ドット用ロングデータ（行=クラスター・列=遺伝子を階層クラスタリング）---
+    na <- active_name(); nr <- ref_name() %||% "ref"
+    ids <- c(paste0(na, " | ", colnames(zA)), paste0(nr, " | ", colnames(zR)))
+    avg_comb <- cbind(zA, zR); pct_comb <- cbind(A$pct[shared, , drop = FALSE],
+                                                 R$pct[shared, , drop = FALSE])
+    colnames(avg_comb) <- ids; colnames(pct_comb) <- ids
+    gene_ord <- shared[stats::hclust(stats::dist(avg_comb))$order]
+    clu_ord  <- ids[stats::hclust(stats::dist(base::t(avg_comb)))$order]
+    long <- data.frame(
+      feature = factor(rep(shared, times = ncol(avg_comb)), levels = gene_ord),
+      id      = factor(rep(ids, each = length(shared)), levels = clu_ord),
+      avg     = as.vector(avg_comb), pct = as.vector(pct_comb),
+      stringsAsFactors = FALSE)
+    list(long = long, corr = corr)
+  }, ignoreInit = TRUE)
+
+  output$dot_combined_plot <- renderPlot({
+    cc <- dot_combined(); req(cc)
+    pt <- plot_theme()
+    ggplot(cc$long, aes(x = feature, y = id)) +
+      geom_point(aes(size = pct, color = avg)) +
+      scale_radius(range = c(0, input$dot_scale %||% 6), limits = c(0, 100)) +
+      scale_color_gradient2(midpoint = 0, low = "#3C5488FF", mid = "grey90",
+                            high = "#DC0000FF", space = "Lab") +
+      labs(x = NULL, y = NULL, size = t("dot_pct"), color = t("dot_avg")) +
+      theme_minimal(base_size = 11) +
+      theme(
+        axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5, size = 8),
+        axis.text.y = element_text(size = 8),
+        panel.grid = element_line(color = paste0(pt$fg2, "30")),
+        plot.background = element_rect(fill = pt$bg, color = NA),
+        panel.background = element_rect(fill = pt$bg, color = NA),
+        text = element_text(color = pt$fg),
+        axis.text = element_text(color = pt$fg2),
+        legend.text = element_text(color = pt$fg),
+        legend.title = element_text(color = pt$fg)
+      )
+  }, bg = "transparent")
+
+  output$dot_corr_table <- renderDT({
+    cc <- dot_combined(); req(cc)
+    datatable(cc$corr, rownames = FALSE, filter = "top",
+              options = list(pageLength = 15, scrollX = TRUE, dom = "Blfrtip"),
+              colnames = c(t("corr_active"), t("corr_best"), t("corr_cor"),
+                           t("corr_second"), paste0(t("corr_cor"), "2"), t("corr_margin")))
+  })
+
+  output$dot_corr_dl <- downloadHandler(
+    filename = function() "active_vs_reference_correspondence.csv",
+    content = function(file) {
+      cc <- dot_combined()
+      if (!is.null(cc)) utils::write.csv(cc$corr, file, row.names = FALSE)
+    }
+  )
 
   # インタラクティブ版（ドットにホバーで発現割合などを表示）
   if (requireNamespace("plotly", quietly = TRUE)) {
