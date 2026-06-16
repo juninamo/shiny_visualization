@@ -1410,8 +1410,11 @@ server <- function(input, output, session) {
       pal <- if (!is.null(lin_cols)) unname(lin_cols[levs]) else scales::hue_pal()(length(levs))
       msize <- max(2, (pt_size %||% 0.3) * 6)
       add_layout <- function(p, showleg) {
+        # シンプルに: x=0/y=0 のゼロライン・グリッドを消す
+        ax <- function(ttl) list(title = ttl, zeroline = FALSE, showgrid = FALSE,
+                                 showline = FALSE, ticks = "")
         plotly::layout(p,
-          xaxis = list(title = axn[1]), yaxis = list(title = axn[2]),
+          xaxis = ax(axn[1]), yaxis = ax(axn[2]),
           paper_bgcolor = pt$bg, plot_bgcolor = pt$bg,
           font = list(color = pt$fg), showlegend = showleg,
           legend = list(font = list(color = pt$fg)))
