@@ -268,6 +268,31 @@ get_expr_matrix <- function(obj, genes) {
   mat[, cells, drop = FALSE]
 }
 
+# Seurat オブジェクトから空間座標 (cell, x, y) を取り出す。
+# meta.data の x/y 系カラムを優先し、無ければ @images の TissueCoordinates。
+spatial_coords <- function(obj) {
+  meta <- obj@meta.data
+  cand <- list(c("x", "y"), c("x_centroid", "y_centroid"), c("sdimx", "sdimy"),
+               c("imagecol", "imagerow"), c("X", "Y"), c("spatial_1", "spatial_2"))
+  for (p in cand) {
+    if (all(p %in% names(meta)) && is.numeric(meta[[p[1]]]) && is.numeric(meta[[p[2]]])) {
+      return(data.frame(cell = rownames(meta), x = meta[[p[1]]], y = meta[[p[2]]],
+                        stringsAsFactors = FALSE))
+    }
+  }
+  if (length(obj@images) > 0) {
+    xy <- tryCatch(do.call(rbind, lapply(names(obj@images), function(im) {
+      tc <- SeuratObject::GetTissueCoordinates(obj@images[[im]])
+      if (!("cell" %in% names(tc))) tc$cell <- rownames(tc)
+      xc <- if ("x" %in% names(tc)) "x" else names(tc)[1]
+      yc <- if ("y" %in% names(tc)) "y" else names(tc)[2]
+      data.frame(cell = tc$cell, x = tc[[xc]], y = tc[[yc]], stringsAsFactors = FALSE)
+    })), error = function(e) NULL)
+    if (!is.null(xy)) return(xy)
+  }
+  NULL
+}
+
 # =============================================================================
 # 翻訳辞書
 # =============================================================================
@@ -424,6 +449,16 @@ i18n <- list(
     gsea_nes_title    = "上位パスウェイ (NES)",
     gsea_need_deg     = "先に「DEG」タブでDEG解析を実行してください。",
     gsea_uses_deg     = "GSEA は上の比較設定で実行した DEG 結果（avg_log2FC でランキング）を使用します。",
+
+    # Spatial
+    spatial_settings  = "空間プロット設定",
+    spatial_color     = "色分け変数",
+    spatial_sample_col = "サンプル列",
+    spatial_sample    = "サンプル",
+    spatial_pt        = "点のサイズ",
+    spatial_flip      = "Y軸を反転",
+    spatial_none      = "このオブジェクトに位置座標(x/y)が見つかりません。",
+    spatial_ds        = "空間データ",
 
     # プレースホルダ
     placeholder_load  = "\U0001F4C2 RDSファイルを選択して「読み込む」ボタンを押してください",
@@ -585,6 +620,16 @@ i18n <- list(
     gsea_need_deg     = "Run a DEG analysis first (on the DEG sub-tab).",
     gsea_uses_deg     = "GSEA uses the DEG result from the comparison above (genes ranked by avg_log2FC).",
 
+    # Spatial
+    spatial_settings  = "Spatial plot settings",
+    spatial_color     = "Color variable",
+    spatial_sample_col = "Sample column",
+    spatial_sample    = "Sample",
+    spatial_pt        = "Point size",
+    spatial_flip      = "Flip Y axis",
+    spatial_none      = "No spatial coordinates (x/y) found in this object.",
+    spatial_ds        = "Spatial dataset",
+
     # Placeholders
     placeholder_load  = "\U0001F4C2 Select an RDS file and click 'Load'",
     placeholder_deg   = "Configure groups above and click 'Run DEG Analysis'",
@@ -665,6 +710,16 @@ ui <- page_sidebar(
       card_body(
         class = "p-2",
         uiOutput("marker_panel_ui")
+      )
+    ),
+
+    # 空間座標プロット（位置情報を含むデータ用）
+    nav_panel(
+      title = "\U0001F5FA️ Spatial",
+      value = "spatial",
+      card_body(
+        class = "p-2",
+        uiOutput("spatial_panel_ui")
       )
     )
   )
@@ -800,7 +855,15 @@ server <- function(input, output, session) {
       sliderInput("plot_width", t("plot_width"), min = 400, max = 4000, value = 800, step = 50),
 
       # リファレンス用のプロット設定（比較時のみ表示）
-      uiOutput("ref_plot_settings_ui")
+      uiOutput("ref_plot_settings_ui"),
+
+      # 空間タブ用: プロットするデータセットの選択
+      conditionalPanel(
+        "input.main_tabs == 'spatial'",
+        hr(),
+        h5("\U0001F5FA️ Spatial", class = "text-primary mb-2"),
+        uiOutput("spatial_ds_ui")
+      )
     )
   })
 
@@ -3355,6 +3418,151 @@ server <- function(input, output, session) {
       colnames = c("Pathway", "NES", "pval", "padj", "Size", "Leading edge", "DB")
     )
   })
+
+  # ==========================================================================
+  # Spatial（空間座標プロット）
+  # ==========================================================================
+  # プロット対象データセット（サイドバーで選択。デフォルトはアクティブ）
+  spatial_obj <- reactive({
+    objs <- loaded_objs()
+    ds <- input$spatial_ds
+    if (!is.null(ds) && !is.null(objs[[ds]])) return(objs[[ds]])
+    seurat_obj()
+  })
+
+  output$spatial_ds_ui <- renderUI({
+    lang <- input$lang
+    objs <- loaded_objs()
+    if (length(objs) == 0) return(NULL)
+    nms <- names(objs)
+    sel <- isolate(input$spatial_ds)
+    if (is.null(sel) || !(sel %in% nms)) sel <- input$active_ds %||% nms[1]
+    selectInput("spatial_ds", t("spatial_ds"), choices = nms, selected = sel)
+  })
+
+  # 選択データの空間座標
+  spatial_xy <- reactive({
+    obj <- spatial_obj(); req(obj)
+    spatial_coords(obj)
+  })
+
+  output$spatial_panel_ui <- renderUI({
+    lang <- input$lang
+    if (!data_loaded()) return(placeholder_ui())
+    xy <- spatial_xy()
+    if (is.null(xy)) {
+      return(div(class = "text-center text-warning py-4", h5(t("spatial_none"))))
+    }
+    obj <- spatial_obj()
+    meta <- obj@meta.data
+    cat_cols <- names(meta)[sapply(meta, function(x) {
+      is.factor(x) || is.character(x) || (is.numeric(x) && length(unique(x)) <= 50)
+    })]
+    color_choices <- names(meta)   # カテゴリ/数値どちらでも色分け可
+    col_sel <- isolate(input$spatial_color)
+    if (is.null(col_sel) || !(col_sel %in% color_choices)) {
+      col_sel <- if ("seurat_clusters" %in% color_choices) "seurat_clusters"
+                 else if (length(cat_cols) > 0) cat_cols[1] else color_choices[1]
+    }
+    # サンプル列の候補（複数サンプルを含む空間データを1サンプルに絞るため）
+    samp_cands <- intersect(c("sample_id", "sample_id_full", "orig.ident", "PatientID",
+                              "donor", "slide", "sample", "library", "fov", "Sample_Type"),
+                            cat_cols)
+    samp_cands <- c("(なし)" = "__none__", setNames(samp_cands, samp_cands))
+    samp_col_sel <- isolate(input$spatial_sample_col)
+    if (is.null(samp_col_sel) || !(samp_col_sel %in% samp_cands)) {
+      samp_col_sel <- if (length(samp_cands) > 1) samp_cands[[2]] else "__none__"
+    }
+    tagList(
+      div(class = "card mb-3", div(class = "card-body",
+        h6(t("spatial_settings"), class = "card-title text-primary"),
+        fluidRow(
+          column(6, selectInput("spatial_color", t("spatial_color"),
+                                choices = color_choices, selected = col_sel)),
+          column(6, selectInput("spatial_sample_col", t("spatial_sample_col"),
+                                choices = samp_cands, selected = samp_col_sel))
+        ),
+        uiOutput("spatial_sample_ui"),
+        fluidRow(
+          column(6, sliderInput("spatial_pt", t("spatial_pt"),
+                                min = 0.1, max = 4, value = isolate(input$spatial_pt) %||% 0.8, step = 0.1)),
+          column(6, div(style = "margin-top: 30px;",
+            checkboxInput("spatial_flip", t("spatial_flip"),
+                          value = isolate(input$spatial_flip) %||% TRUE)))
+        )
+      )),
+      uiOutput("spatial_plot_ui")
+    )
+  })
+
+  # サンプル選択UI（サンプル列に追従。複数選択可）
+  output$spatial_sample_ui <- renderUI({
+    obj <- spatial_obj(); req(obj)
+    sc <- input$spatial_sample_col
+    if (is.null(sc) || identical(sc, "__none__") || !(sc %in% names(obj@meta.data))) return(NULL)
+    vals <- sort(unique(as.character(obj@meta.data[[sc]])))
+    prev <- isolate(input$spatial_sample)
+    sel <- if (!is.null(prev) && all(prev %in% vals) && length(prev) > 0) prev else vals[1]
+    selectizeInput("spatial_sample", t("spatial_sample"), choices = vals, selected = sel,
+                   multiple = TRUE, options = list(plugins = list("remove_button")))
+  })
+
+  output$spatial_plot_ui <- renderUI({
+    plotOutput("spatial_plot", height = act_h(), width = act_w())
+  })
+
+  output$spatial_plot <- renderPlot({
+    obj <- spatial_obj(); req(obj, input$spatial_color)
+    xy <- spatial_xy(); req(xy)
+    pt <- plot_theme()
+    meta <- obj@meta.data
+    df <- xy[xy$cell %in% rownames(meta), , drop = FALSE]
+    df$col <- meta[df$cell, input$spatial_color]
+    sc <- input$spatial_sample_col
+    # サンプルで絞り込み + facet
+    facet <- FALSE
+    if (!is.null(sc) && !identical(sc, "__none__") && sc %in% names(meta)) {
+      df$sample <- as.character(meta[df$cell, sc])
+      if (!is.null(input$spatial_sample) && length(input$spatial_sample) > 0) {
+        df <- df[df$sample %in% input$spatial_sample, , drop = FALSE]
+      }
+      facet <- length(unique(df$sample)) > 1
+    }
+    validate(need(nrow(df) > 0, t("spatial_none")))
+    # クラスター系の色分けは系統順 factor に
+    is_cat <- is.factor(df$col) || is.character(df$col) ||
+              (is.numeric(df$col) && length(unique(df$col)) <= 50)
+    if (is_cat) {
+      df$col <- factor(as.character(df$col), levels = cluster_level_order(df$col))
+    }
+    p <- ggplot(df, aes(x = x, y = y, color = col)) +
+      geom_point(size = input$spatial_pt %||% 0.8, shape = 16) +
+      coord_fixed() +
+      labs(x = NULL, y = NULL, color = input$spatial_color) +
+      theme_minimal(base_size = 12) +
+      theme(
+        panel.grid = element_blank(),
+        axis.text = element_blank(),
+        plot.background = element_rect(fill = pt$bg, color = NA),
+        panel.background = element_rect(fill = pt$bg, color = NA),
+        text = element_text(color = pt$fg),
+        legend.text = element_text(color = pt$fg),
+        legend.title = element_text(color = pt$fg),
+        strip.text = element_text(color = pt$fg)
+      )
+    if (isTRUE(input$spatial_flip)) p <- p + scale_y_reverse()
+    if (is_cat) {
+      lin <- lineage_colors_or_null(df$col)
+      if (!is.null(lin)) p <- p + scale_color_manual(values = lin)
+      n_lev <- nlevels(df$col)
+      if (n_lev > 30) p <- p + theme(legend.position = "none")
+      p <- p + guides(color = guide_legend(override.aes = list(size = 3)))
+    } else {
+      p <- p + scale_color_viridis_c()
+    }
+    if (facet) p <- p + facet_wrap(~ sample)
+    p
+  }, bg = "transparent")
 }
 
 # --- アプリ実行 ---
