@@ -477,6 +477,10 @@ i18n <- list(
     spatial_none      = "このオブジェクトに位置座標(x/y)が見つかりません。",
     spatial_ds        = "空間データ",
     spatial_seg       = "セグメンテーション(細胞境界)を表示",
+    spatial_by        = "色分けの基準",
+    spatial_by_meta   = "メタデータ変数",
+    spatial_by_gene   = "遺伝子発現",
+    spatial_gene      = "遺伝子",
 
     # プレースホルダ
     placeholder_load  = "\U0001F4C2 RDSファイルを選択して「読み込む」ボタンを押してください",
@@ -648,6 +652,10 @@ i18n <- list(
     spatial_none      = "No spatial coordinates (x/y) found in this object.",
     spatial_ds        = "Spatial dataset",
     spatial_seg       = "Show segmentation (cell boundaries)",
+    spatial_by        = "Color by",
+    spatial_by_meta   = "Metadata variable",
+    spatial_by_gene   = "Gene expression",
+    spatial_gene      = "Gene",
 
     # Placeholders
     placeholder_load  = "\U0001F4C2 Select an RDS file and click 'Load'",
@@ -3500,12 +3508,28 @@ server <- function(input, output, session) {
     if (is.null(samp_col_sel) || !(samp_col_sel %in% samp_cands)) {
       samp_col_sel <- if (length(samp_cands) > 1) samp_cands[[2]] else "__none__"
     }
+    genes <- sort(rownames(obj))
+    gene_sel <- isolate(input$spatial_gene)
+    if (is.null(gene_sel) || !(gene_sel %in% genes)) gene_sel <- genes[1]
+    by_sel <- isolate(input$spatial_by) %||% "meta"
     tagList(
       div(class = "card mb-3", div(class = "card-body",
         h6(t("spatial_settings"), class = "card-title text-primary"),
+        radioButtons("spatial_by", t("spatial_by"),
+          choices = c(setNames("meta", t("spatial_by_meta")),
+                      setNames("gene", t("spatial_by_gene"))),
+          selected = by_sel, inline = TRUE),
         fluidRow(
-          column(6, selectInput("spatial_color", t("spatial_color"),
-                                choices = color_choices, selected = col_sel)),
+          column(6,
+            conditionalPanel("input.spatial_by == 'meta'",
+              selectInput("spatial_color", t("spatial_color"),
+                          choices = color_choices, selected = col_sel)),
+            conditionalPanel("input.spatial_by == 'gene'",
+              selectizeInput("spatial_gene", t("spatial_gene"), choices = genes,
+                             selected = gene_sel,
+                             options = list(placeholder = t("gene_placeholder"),
+                                            maxOptions = 1000)))
+          ),
           column(6, selectInput("spatial_sample_col", t("spatial_sample_col"),
                                 choices = samp_cands, selected = samp_col_sel))
         ),
@@ -3547,13 +3571,31 @@ server <- function(input, output, session) {
     }
   })
 
+  # 色分けに使う名前（メタデータ変数名 or 遺伝子名）
+  spatial_colorvar <- reactive({
+    if (identical(input$spatial_by, "gene")) input$spatial_gene else input$spatial_color
+  })
+
   # 描画用データの準備（点/ポリゴン・plotly/ggplot で共通）
   spatial_prep <- reactive({
-    obj <- spatial_obj(); req(obj, input$spatial_color)
+    obj <- spatial_obj(); req(obj)
     xy <- spatial_xy(); req(xy)
     meta <- obj@meta.data
+    by_gene <- identical(input$spatial_by, "gene")
+    if (by_gene) req(input$spatial_gene) else req(input$spatial_color)
     df <- xy[xy$cell %in% rownames(meta), , drop = FALSE]
-    df$col <- meta[df$cell, input$spatial_color]
+    if (by_gene) {
+      # 選択遺伝子の発現量（data レイヤー）で色分け
+      g <- input$spatial_gene
+      em <- get_expr_matrix(obj, g)
+      validate(need(!is.null(em), t("spatial_none")))
+      ev <- as.numeric(em[1, ])
+      names(ev) <- colnames(em)
+      df <- df[df$cell %in% names(ev), , drop = FALSE]
+      df$col <- ev[df$cell]
+    } else {
+      df$col <- meta[df$cell, input$spatial_color]
+    }
     sc <- input$spatial_sample_col
     facet <- FALSE
     if (!is.null(sc) && !identical(sc, "__none__") && sc %in% names(meta)) {
@@ -3564,8 +3606,9 @@ server <- function(input, output, session) {
       facet <- length(unique(df$sample)) > 1
     }
     validate(need(nrow(df) > 0, t("spatial_none")))
-    is_cat <- is.factor(df$col) || is.character(df$col) ||
-              (is.numeric(df$col) && length(unique(df$col)) <= 50)
+    # 遺伝子発現は常に連続値、メタデータは型から判定
+    is_cat <- !by_gene && (is.factor(df$col) || is.character(df$col) ||
+              (is.numeric(df$col) && length(unique(df$col)) <= 50))
     if (is_cat) df$col <- factor(as.character(df$col), levels = cluster_level_order(df$col))
     seg <- spatial_seg()
     use_seg <- isTRUE(input$spatial_use_seg) && !is.null(seg)
@@ -3620,7 +3663,7 @@ server <- function(input, output, session) {
     output$spatial_plotly <- plotly::renderPlotly({
       pr <- spatial_prep(); pt <- plot_theme()
       df <- pr$df; pt_sz <- input$spatial_pt %||% 0.8
-      flip <- isTRUE(input$spatial_flip); colorvar <- input$spatial_color
+      flip <- isTRUE(input$spatial_flip); colorvar <- spatial_colorvar()
       disc_pal <- NULL
       if (pr$is_cat) {
         lin <- lineage_colors_or_null(df$col)
@@ -3663,12 +3706,12 @@ server <- function(input, output, session) {
       p <- p +
         geom_polygon(data = sg, aes(x = x, y = y, group = cell, fill = col),
                      color = pt$bg, linewidth = 0.1) +
-        labs(fill = input$spatial_color)
+        labs(fill = spatial_colorvar())
     } else {
       p <- p +
         geom_point(data = df, aes(x = x, y = y, color = col),
                    size = pt_sz, shape = 16) +
-        labs(color = input$spatial_color)
+        labs(color = spatial_colorvar())
     }
     p <- p + coord_fixed() + labs(x = NULL, y = NULL) +
       theme_minimal(base_size = 12) +
