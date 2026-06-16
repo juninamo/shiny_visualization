@@ -27,13 +27,19 @@ feature immediately.
 - **Pre-registered marker sets** — curated panels (`Cell type`, `T cell`, `B cell`,
   `Myeloid`, `NK / ILC`, `Stromal / Tissue`, `All curated`) drive the Heatmap and
   Dot Plot tabs out of the box.
-- **Dynamic lineage palette** — when cluster labels follow the
+- **Dynamic lineage palette & ordering** — when cluster labels follow the
   `<number>_<Lineage>` convention (e.g. `0_B_Plasma`, `2_TNK_ILC`), the app
-  automatically assigns a light→dark color gradient within each lineage. This is
-  applied to the **Composition**, **Group UMAP**, and **Violin** tabs, and falls
-  back to default colors for non-matching variables (e.g. `donor`, `site`).
-  Supported lineage suffixes: `Epithelial`, `Stromal_Endothelial`, `TNK_ILC`,
-  `B_Plasma`, `Myeloid`.
+  automatically (a) assigns a light→dark color gradient within each lineage and
+  (b) orders the cluster levels first by lineage, then by the leading number.
+  Applied to **Group UMAP**, **Violin**, **Composition**, **Heatmap**,
+  **Dot Plot**, and the **DEG** group selectors (so same-lineage clusters stay
+  adjacent). Falls back to default colors / natural ordering for non-matching
+  variables (e.g. `donor`, `site`). Supported lineage suffixes: `Epithelial`,
+  `Stromal_Endothelial`, `TNK_ILC`, `B_Plasma`, `Myeloid`.
+- **Cluster sub-selection** — the Composition, Heatmap, and Dot Plot tabs let you
+  pick which clusters to draw. In Composition the proportions are **recomputed
+  within the selected subset** (e.g. select only the T-cell clusters to see
+  composition *within T cells*).
 - **External database links** — each gene links out to NCBI Gene, ImmuNexUT, and
   AMP RA2.
 - **Light / dark mode** and a **JP / EN** language toggle.

@@ -100,6 +100,30 @@ lineage_colors_or_null <- function(levels) {
   generate_cluster_colors(levels)
 }
 
+# クラスターレベルの並び順を決める。
+# 「数字_系統」形式（既知系統が半数以上）の場合は、まず系統ごと
+# （known_lineages の順 → 未知系統はアルファベット順）に、その中で先頭の
+# 数字の昇順に並べる。形式が合わなければ自然順（数字を考慮したソート）。
+cluster_level_order <- function(levels) {
+  levs <- as.character(unique(levels))
+  na_lev <- levs[is.na(levs) | levs == "NA"]
+  levs <- levs[!is.na(levs) & levs != "NA"]
+  if (length(levs) == 0) return(c(levs, na_lev))
+  coarse <- sub("^_+", "", regmatches(levs, regexpr("[A-Za-z_]+$", levs)))
+  num_prefix <- suppressWarnings(as.numeric(sub("^(\\d+).*", "\\1", levs)))
+  if (length(coarse) > 0 && mean(coarse %in% known_lineages) >= 0.5) {
+    # 系統順（既知系統を優先）→ 系統名 → 先頭数字
+    lin_rank <- match(coarse, known_lineages)
+    lin_rank[is.na(lin_rank)] <- length(known_lineages) + 1L
+    ord <- order(lin_rank, coarse, num_prefix, levs)
+  } else if (all(!is.na(num_prefix))) {
+    ord <- order(num_prefix, levs)   # 数字主体のクラスター名は数値順
+  } else {
+    ord <- order(levs)
+  }
+  c(levs[ord], na_lev)
+}
+
 # =============================================================================
 # よく使うマーカー遺伝子セット（Heatmap / Dot plot 用に事前登録）
 # =============================================================================
@@ -259,6 +283,7 @@ i18n <- list(
     marker_settings      = "マーカー設定",
     marker_set           = "マーカーセット",
     marker_cluster       = "クラスター変数",
+    draw_clusters        = "描画するクラスター",
     hm_scale             = "Z-score (行スケーリング)",
     hm_cluster_rows      = "行をクラスタリング",
     hm_cluster_cols      = "列をクラスタリング",
@@ -333,6 +358,7 @@ i18n <- list(
     marker_settings      = "Marker Settings",
     marker_set           = "Marker Set",
     marker_cluster       = "Cluster Variable",
+    draw_clusters        = "Clusters to plot",
     hm_scale             = "Z-score (row scaling)",
     hm_cluster_rows      = "Cluster rows",
     hm_cluster_cols      = "Cluster columns",
@@ -843,9 +869,9 @@ server <- function(input, output, session) {
         )
       )
     } else {
-      # カテゴリカル列の場合: グループ選択
+      # カテゴリカル列の場合: グループ選択（系統順に並べて選びやすく）
       obj <- seurat_obj()
-      groups <- sort(unique(as.character(obj@meta.data[[input$deg_group_var]])))
+      groups <- cluster_level_order(obj@meta.data[[input$deg_group_var]])
       group2_choices <- c(
         setNames("__ALL_OTHERS__", t("deg_all_others")),
         setNames(groups, groups)
@@ -963,7 +989,11 @@ server <- function(input, output, session) {
     req(seurat_obj(), input$gene, input$group_var)
     obj <- seurat_obj()
     pt <- plot_theme()
-    Idents(obj) <- obj@meta.data[[input$group_var]]
+    # クラスターを系統順 factor に並べ替え（軸・色順を統一）
+    Idents(obj) <- factor(
+      as.character(obj@meta.data[[input$group_var]]),
+      levels = cluster_level_order(obj@meta.data[[input$group_var]])
+    )
     p <- VlnPlot(obj, features = input$gene, pt.size = input$pt_size) + pt$theme
     # 系統(lineage)グラデーション配色（形式が合えば適用、合わなければデフォルト）
     lin_cols <- lineage_colors_or_null(levels(Idents(obj)))
@@ -1005,6 +1035,11 @@ server <- function(input, output, session) {
     req(seurat_obj(), input$group_var, has_umap())
     obj <- seurat_obj()
     pt <- plot_theme()
+    # クラスターを系統順 factor に並べ替え（凡例・色順を統一）
+    obj@meta.data[[input$group_var]] <- factor(
+      as.character(obj@meta.data[[input$group_var]]),
+      levels = cluster_level_order(obj@meta.data[[input$group_var]])
+    )
     p <- DimPlot(obj, reduction = umap_reduction(), group.by = input$group_var,
                  label = TRUE, pt.size = input$pt_size) + pt$theme_legend
     # 系統(lineage)グラデーション配色（形式が合えば適用、合わなければデフォルト）
@@ -1063,6 +1098,8 @@ server <- function(input, output, session) {
                           multiple = TRUE)
             )
           ),
+          # 描画するクラスター（選択した範囲内で割合を再計算）
+          uiOutput("comp_clusters_ui"),
           fluidRow(
             column(12,
               radioButtons("comp_color_scheme", t("comp_color_scheme"),
@@ -1100,13 +1137,22 @@ server <- function(input, output, session) {
     # --- 割合を計算 (group_vars 内で proportion を算出) ---
     df <- meta[key_cols]
     for (cc in key_cols) df[[cc]] <- as.character(df[[cc]])
+    # 描画クラスターに限定（選択範囲内で割合を再計算 → 例: T細胞内での割合）
+    sel_clusters <- selected_clusters("comp", obj, fill_var)
+    df <- df[df[[fill_var]] %in% sel_clusters, , drop = FALSE]
+    validate(need(nrow(df) > 0, t("comp_no_cat")))
     counts <- aggregate(list(n = rep(1L, nrow(df))), by = df, FUN = sum)
     grp_key <- do.call(paste, c(counts[group_vars], sep = "\r"))
     totals <- tapply(counts$n, grp_key, sum)
     counts$proportion <- counts$n / as.numeric(totals[grp_key])
 
+    # --- クラスター(塗り分け)とX軸を系統順 factor に ---
+    levs <- cluster_level_order(unique(counts[[fill_var]]))
+    counts[[fill_var]] <- factor(counts[[fill_var]], levels = levs)
+    counts[[x_var]] <- factor(counts[[x_var]],
+                              levels = cluster_level_order(unique(counts[[x_var]])))
+
     # --- 配色 ---
-    levs <- sort(unique(counts[[fill_var]]))
     if (identical(input$comp_color_scheme, "manual")) {
       pal <- manual_colors
       if (length(levs) > length(pal)) {
@@ -1192,22 +1238,50 @@ server <- function(input, output, session) {
                         choices = names(marker_sets), selected = set_sel)
           )
         ),
+        # 描画するクラスターの選択（クラスター変数に追従）
+        uiOutput(paste0(prefix, "_clusters_ui")),
         extra
       )
     )
   }
 
-  # --- マーカーセットの平均発現マトリクス (cluster x gene) を計算 ---
-  # genes はセット順を維持。z-score 行(=遺伝子)スケーリングは呼び出し側で。
-  marker_avg_matrix <- function(obj, cluster_var, genes) {
+  # --- 描画クラスター選択UI（クラスター変数に追従、デフォルトは全選択） ---
+  cluster_select_ui <- function(prefix) {
+    obj <- seurat_obj()
+    if (is.null(obj)) return(NULL)
+    cvar <- input[[paste0(prefix, "_cluster")]]
+    if (is.null(cvar) || !(cvar %in% names(obj@meta.data))) return(NULL)
+    levs <- cluster_level_order(obj@meta.data[[cvar]])
+    prev <- isolate(input[[paste0(prefix, "_clusters_sel")]])
+    sel <- if (!is.null(prev) && length(prev) > 0 && all(prev %in% levs)) prev else levs
+    selectizeInput(
+      paste0(prefix, "_clusters_sel"), t("draw_clusters"),
+      choices = levs, selected = sel, multiple = TRUE,
+      options = list(plugins = list("remove_button"))
+    )
+  }
+
+  # --- 選択中の描画クラスター（未指定なら全クラスター） ---
+  selected_clusters <- function(prefix, obj, cluster_var) {
+    sel <- input[[paste0(prefix, "_clusters_sel")]]
+    levs <- cluster_level_order(obj@meta.data[[cluster_var]])
+    if (is.null(sel) || length(sel) == 0) return(levs)
+    levs[levs %in% sel]   # 並び順は cluster_level_order を維持
+  }
+
+  # --- マーカーセットの平均発現マトリクス (gene x cluster) を計算 ---
+  # genes はセット順を維持。clusters で描画クラスターを限定・並び替え。
+  marker_avg_matrix <- function(obj, cluster_var, genes, clusters = NULL) {
     mat <- get_expr_matrix(obj, genes)        # genes x cells（存在する遺伝子のみ）
     if (is.null(mat)) return(NULL)
     labels <- as.character(obj@meta.data[[cluster_var]])
     keep <- !is.na(labels)
     mat <- mat[, keep, drop = FALSE]
     labels <- labels[keep]
-    # クラスターごとの平均
-    cl_levels <- sort(unique(labels))
+    # 描画クラスターの順序（指定があればその順、なければ系統順）
+    cl_levels <- if (!is.null(clusters)) clusters else cluster_level_order(unique(labels))
+    cl_levels <- cl_levels[cl_levels %in% labels]
+    if (length(cl_levels) == 0) return(NULL)
     avg <- sapply(cl_levels, function(cl) {
       Matrix::rowMeans(mat[, labels == cl, drop = FALSE])
     })
@@ -1215,6 +1289,11 @@ server <- function(input, output, session) {
                                          dimnames = list(rownames(mat), cl_levels))
     avg  # genes x clusters
   }
+
+  # 描画クラスター選択UI（各タブ）
+  output$hm_clusters_ui   <- renderUI({ cluster_select_ui("hm") })
+  output$dot_clusters_ui  <- renderUI({ cluster_select_ui("dot") })
+  output$comp_clusters_ui <- renderUI({ cluster_select_ui("comp") })
 
   # ==========================================================================
   # Heatmap
@@ -1266,12 +1345,14 @@ server <- function(input, output, session) {
 
     set_df <- marker_set_to_df(marker_sets[[input$hm_set]])
     genes <- unique(set_df$feature)
-    avg <- marker_avg_matrix(obj, input$hm_cluster, genes)   # genes x clusters
+    clusters <- selected_clusters("hm", obj, input$hm_cluster)
+    avg <- marker_avg_matrix(obj, input$hm_cluster, genes, clusters)  # genes x clusters
     validate(need(!is.null(avg) && nrow(avg) > 0, t("hm_no_genes")))
 
     mat <- avg
     if (isTRUE(input$hm_scale)) {
-      mat <- t(scale(t(mat)))          # 遺伝子(行)ごとに Z-score
+      # NOTE: server scope の t() は翻訳ヘルパーなので転置は base::t() を使う
+      mat <- base::t(scale(base::t(mat)))   # 遺伝子(行)ごとに Z-score
       mat <- mat[stats::complete.cases(mat), , drop = FALSE]
       mat[mat > 2] <- 2
       mat[mat < -2] <- -2
@@ -1280,7 +1361,7 @@ server <- function(input, output, session) {
 
     # 行=クラスター, 列=遺伝子 にして遺伝子名を45度ラベル
     pheatmap::pheatmap(
-      mat = t(mat),
+      mat = base::t(mat),
       color = grDevices::colorRampPalette(c("#0072B5FF", "white", "#BC3C29FF"))(50),
       border_color = "white",
       show_rownames = TRUE,
@@ -1346,7 +1427,13 @@ server <- function(input, output, session) {
     keep <- !is.na(labels)
     mat <- mat[, keep, drop = FALSE]
     labels <- labels[keep]
-    cl_levels <- sort(unique(labels))
+    # 描画クラスターを選択・系統順に並べ、対象細胞だけに限定
+    cl_levels <- selected_clusters("dot", obj, input$dot_cluster)
+    cl_levels <- cl_levels[cl_levels %in% labels]
+    validate(need(length(cl_levels) > 0, t("hm_no_genes")))
+    sel_idx <- labels %in% cl_levels
+    mat <- mat[, sel_idx, drop = FALSE]
+    labels <- labels[sel_idx]
 
     # クラスターごとに発現割合(pct.exp)と平均発現(avg.exp)を算出
     rows <- lapply(cl_levels, function(cl) {
