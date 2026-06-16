@@ -291,6 +291,14 @@ i18n <- list(
     marker_set           = "マーカーセット",
     marker_cluster       = "クラスター変数",
     draw_clusters        = "描画するクラスター",
+    mk_feature_mode      = "遺伝子の選択",
+    mk_feat_set          = "マーカーセット",
+    mk_feat_set_custom   = "セット + 自分で選択",
+    mk_feat_custom       = "自分で選択のみ",
+    mk_custom_genes      = "遺伝子を選択",
+    mk_custom_group      = "カスタム",
+    plot_run             = "描画",
+    plot_run_hint        = "設定後「描画」ボタンを押してください",
     hm_scale             = "Z-score (行スケーリング)",
     hm_cluster_rows      = "行をクラスタリング",
     hm_cluster_cols      = "列をクラスタリング",
@@ -374,6 +382,14 @@ i18n <- list(
     marker_set           = "Marker Set",
     marker_cluster       = "Cluster Variable",
     draw_clusters        = "Clusters to plot",
+    mk_feature_mode      = "Gene selection",
+    mk_feat_set          = "Marker set",
+    mk_feat_set_custom   = "Set + custom",
+    mk_feat_custom       = "Custom only",
+    mk_custom_genes      = "Select genes",
+    mk_custom_group      = "Custom",
+    plot_run             = "Plot",
+    plot_run_hint        = "Configure options, then click 'Plot'",
     hm_scale             = "Z-score (row scaling)",
     hm_cluster_rows      = "Cluster rows",
     hm_cluster_cols      = "Cluster columns",
@@ -1179,7 +1195,8 @@ server <- function(input, output, session) {
                                        setNames("lineage", t("comp_scheme_lineage"))),
                            selected = scheme_sel, inline = TRUE)
             )
-          )
+          ),
+          plot_run_btn("comp_run")
         )
       ),
       uiOutput("comp_plot_ui")
@@ -1188,12 +1205,14 @@ server <- function(input, output, session) {
 
   output$comp_plot_ui <- renderUI({
     if (!data_loaded()) return(NULL)
+    if ((input$comp_run %||% 0) == 0) return(run_hint_ui())
     plotOutput("comp_plot",
                height = paste0(input$plot_height, "px"),
                width = paste0(input$plot_width, "px"))
   })
 
-  output$comp_plot <- renderPlot({
+  # 「描画」ボタンを押したときだけ計算
+  comp_plot_obj <- eventReactive(input$comp_run, {
     req(seurat_obj(), input$comp_cluster, input$comp_x)
     obj <- seurat_obj()
     pt <- plot_theme()
@@ -1270,13 +1289,16 @@ server <- function(input, output, session) {
     }
 
     p
-  }, bg = "transparent")
+  }, ignoreInit = TRUE)
+
+  output$comp_plot <- renderPlot({ comp_plot_obj() }, bg = "transparent")
 
   # ==========================================================================
   # マーカー設定UI（Heatmap / Dot plot 共通）
   # ==========================================================================
   # prefix で input ID を分け、tab ごとに状態を保持する
-  marker_settings_card <- function(prefix, extra = NULL) {
+  # feature_mode = TRUE のとき「セット / セット+カスタム / 自分で選択のみ」を選べる
+  marker_settings_card <- function(prefix, extra = NULL, feature_mode = FALSE) {
     col_types <- meta_col_types()
     cat_cols <- col_types$cat
 
@@ -1295,26 +1317,102 @@ server <- function(input, output, session) {
       names(marker_sets)[1]
     }
 
+    id_mode   <- paste0(prefix, "_feature_mode")
+    id_set    <- paste0(prefix, "_set")
+    id_custom <- paste0(prefix, "_custom_genes")
+    gene_choices <- if (data_loaded()) sort(rownames(seurat_obj())) else character(0)
+
+    if (feature_mode) {
+      mode_sel <- isolate(input[[id_mode]]) %||% "set"
+      gene_block <- tagList(
+        fluidRow(
+          column(12,
+            radioButtons(id_mode, t("mk_feature_mode"),
+              choices = c(
+                setNames("set",        t("mk_feat_set")),
+                setNames("set_custom", t("mk_feat_set_custom")),
+                setNames("custom",     t("mk_feat_custom"))
+              ),
+              selected = mode_sel, inline = TRUE)
+          )
+        ),
+        conditionalPanel(
+          sprintf("input.%s == 'set' || input.%s == 'set_custom'", id_mode, id_mode),
+          fluidRow(column(12,
+            selectInput(id_set, t("marker_set"),
+                        choices = names(marker_sets), selected = set_sel)
+          ))
+        ),
+        conditionalPanel(
+          sprintf("input.%s == 'custom' || input.%s == 'set_custom'", id_mode, id_mode),
+          fluidRow(column(12,
+            selectizeInput(id_custom, t("mk_custom_genes"),
+                           choices = gene_choices,
+                           selected = isolate(input[[id_custom]]),
+                           multiple = TRUE,
+                           options = list(placeholder = t("gene_placeholder"),
+                                          maxOptions = 1000))
+          ))
+        )
+      )
+      top_row <- fluidRow(column(12,
+        selectInput(paste0(prefix, "_cluster"), t("marker_cluster"),
+                    choices = cat_cols, selected = clu_sel)
+      ))
+    } else {
+      gene_block <- NULL
+      top_row <- fluidRow(
+        column(6,
+          selectInput(paste0(prefix, "_cluster"), t("marker_cluster"),
+                      choices = cat_cols, selected = clu_sel)
+        ),
+        column(6,
+          selectInput(id_set, t("marker_set"),
+                      choices = names(marker_sets), selected = set_sel)
+        )
+      )
+    }
+
     div(
       class = "card mb-3",
       div(
         class = "card-body",
         h6(t("marker_settings"), class = "card-title text-primary"),
-        fluidRow(
-          column(6,
-            selectInput(paste0(prefix, "_cluster"), t("marker_cluster"),
-                        choices = cat_cols, selected = clu_sel)
-          ),
-          column(6,
-            selectInput(paste0(prefix, "_set"), t("marker_set"),
-                        choices = names(marker_sets), selected = set_sel)
-          )
-        ),
+        top_row,
+        gene_block,
         # 描画するクラスターの選択（クラスター変数に追従）
         uiOutput(paste0(prefix, "_clusters_ui")),
         extra
       )
     )
+  }
+
+  # --- マーカー描画用の (feature, group) を解決（セット / セット+カスタム / カスタムのみ） ---
+  resolve_marker_set_df <- function(prefix) {
+    mode <- input[[paste0(prefix, "_feature_mode")]] %||% "set"
+    setn <- input[[paste0(prefix, "_set")]]
+    parts <- list()
+    if (mode %in% c("set", "set_custom") && !is.null(setn)) {
+      parts[[length(parts) + 1]] <- marker_set_to_df(marker_sets[[setn]])
+    }
+    if (mode %in% c("custom", "set_custom")) {
+      cg <- input[[paste0(prefix, "_custom_genes")]]
+      if (length(cg) > 0) {
+        parts[[length(parts) + 1]] <- data.frame(
+          feature = cg, group = t("mk_custom_group"), stringsAsFactors = FALSE)
+      }
+    }
+    if (length(parts) == 0) {
+      return(data.frame(feature = character(0), group = character(0),
+                        stringsAsFactors = FALSE))
+    }
+    df <- do.call(rbind, parts)
+    df[!duplicated(df$feature), , drop = FALSE]   # セットの groupを優先
+  }
+
+  # --- マーカー描画用の遺伝子のみ ---
+  resolve_marker_genes <- function(prefix) {
+    unique(resolve_marker_set_df(prefix)$feature)
   }
 
   # --- 描画クラスター選択UI（クラスター変数に追従、デフォルトは全選択） ---
@@ -1367,6 +1465,17 @@ server <- function(input, output, session) {
   output$dot_clusters_ui  <- renderUI({ cluster_select_ui("dot") })
   output$comp_clusters_ui <- renderUI({ cluster_select_ui("comp") })
 
+  # 描画実行ボタン（自動描画せず、押したときだけ描画）
+  plot_run_btn <- function(id) {
+    div(class = "d-grid mt-3",
+        actionButton(id, t("plot_run"), class = "btn-primary",
+                     icon = icon("play")))
+  }
+  # 未実行時に表示するヒント
+  run_hint_ui <- function() {
+    div(class = "text-center text-muted py-5", h5(t("plot_run_hint")))
+  }
+
   # ==========================================================================
   # Heatmap
   # ==========================================================================
@@ -1395,28 +1504,30 @@ server <- function(input, output, session) {
                       value = isolate(input$hm_cluster_cols) %||% TRUE)
       )
     )
+    extra <- tagList(extra, plot_run_btn("hm_run"))
 
     tagList(
-      marker_settings_card("hm", extra),
+      marker_settings_card("hm", extra, feature_mode = TRUE),
       uiOutput("heatmap_plot_ui")
     )
   })
 
   output$heatmap_plot_ui <- renderUI({
     if (!data_loaded()) return(NULL)
+    if ((input$hm_run %||% 0) == 0) return(run_hint_ui())
     plotOutput("heatmap_plot",
                height = paste0(input$plot_height, "px"),
                width = paste0(input$plot_width, "px"))
   })
 
-  output$heatmap_plot <- renderPlot({
-    req(seurat_obj(), input$hm_cluster, input$hm_set,
+  # 「描画」ボタンを押したときだけ計算（自動描画しない）
+  heatmap_spec <- eventReactive(input$hm_run, {
+    req(seurat_obj(), input$hm_cluster,
         requireNamespace("pheatmap", quietly = TRUE))
     obj <- seurat_obj()
-    pt <- plot_theme()
 
-    set_df <- marker_set_to_df(marker_sets[[input$hm_set]])
-    genes <- unique(set_df$feature)
+    genes <- resolve_marker_genes("hm")
+    validate(need(length(genes) > 0, t("hm_no_genes")))
     clusters <- selected_clusters("hm", obj, input$hm_cluster)
     avg <- marker_avg_matrix(obj, input$hm_cluster, genes, clusters)  # genes x clusters
     validate(need(!is.null(avg) && nrow(avg) > 0, t("hm_no_genes")))
@@ -1430,19 +1541,25 @@ server <- function(input, output, session) {
       mat[mat < -2] <- -2
     }
     validate(need(nrow(mat) > 0, t("hm_no_genes")))
+    list(mat = mat,
+         cluster_rows = isTRUE(input$hm_cluster_rows),
+         cluster_cols = isTRUE(input$hm_cluster_cols))
+  }, ignoreInit = TRUE)
 
-    # 行=クラスター, 列=遺伝子 にして遺伝子名を45度ラベル
+  output$heatmap_plot <- renderPlot({
+    spec <- heatmap_spec()
+    # 行=クラスター, 列=遺伝子 にして遺伝子名を垂直ラベル
     pheatmap::pheatmap(
-      mat = base::t(mat),
+      mat = base::t(spec$mat),
       color = grDevices::colorRampPalette(c("#0072B5FF", "white", "#BC3C29FF"))(50),
       border_color = "white",
       show_rownames = TRUE,
       show_colnames = TRUE,
-      cluster_rows = isTRUE(input$hm_cluster_rows),
-      cluster_cols = isTRUE(input$hm_cluster_cols),
+      cluster_rows = spec$cluster_rows,
+      cluster_cols = spec$cluster_cols,
       treeheight_row = 0,
       treeheight_col = 0,
-      angle_col = 45,
+      angle_col = 90,
       fontsize = 11,
       scale = "none",
       silent = FALSE
@@ -1471,27 +1588,31 @@ server <- function(input, output, session) {
                       value = isolate(input$dot_facet) %||% TRUE)
       )
     )
+    extra <- tagList(extra, plot_run_btn("dot_run"))
 
     tagList(
-      marker_settings_card("dot", extra),
+      marker_settings_card("dot", extra, feature_mode = TRUE),
       uiOutput("dotplot_plot_ui")
     )
   })
 
   output$dotplot_plot_ui <- renderUI({
     if (!data_loaded()) return(NULL)
+    if ((input$dot_run %||% 0) == 0) return(run_hint_ui())
     plotOutput("dotplot_plot",
                height = paste0(input$plot_height, "px"),
                width = paste0(input$plot_width, "px"))
   })
 
-  output$dotplot_plot <- renderPlot({
-    req(seurat_obj(), input$dot_cluster, input$dot_set)
+  # 「描画」ボタンを押したときだけ計算
+  dotplot_obj <- eventReactive(input$dot_run, {
+    req(seurat_obj(), input$dot_cluster)
     obj <- seurat_obj()
     pt <- plot_theme()
 
-    set_df <- marker_set_to_df(marker_sets[[input$dot_set]])
+    set_df <- resolve_marker_set_df("dot")
     genes_all <- unique(set_df$feature)
+    validate(need(length(genes_all) > 0, t("hm_no_genes")))
     mat <- get_expr_matrix(obj, genes_all)     # genes x cells
     validate(need(!is.null(mat) && nrow(mat) > 0, t("hm_no_genes")))
 
@@ -1566,7 +1687,9 @@ server <- function(input, output, session) {
     }
 
     p
-  }, bg = "transparent")
+  }, ignoreInit = TRUE)
+
+  output$dotplot_plot <- renderPlot({ dotplot_obj() }, bg = "transparent")
 
   # ==========================================================================
   # DEG解析
@@ -1676,13 +1799,17 @@ server <- function(input, output, session) {
       ))
     }
 
+    # plotly があればインタラクティブ（ホバーで遺伝子名表示）、無ければ静的
+    volcano_out <- if (requireNamespace("plotly", quietly = TRUE)) {
+      plotly::plotlyOutput("volcano_plotly", height = "500px")
+    } else {
+      plotOutput("volcano_plot", height = "500px",
+                 width = paste0(input$plot_width, "px"))
+    }
+
     tagList(
       # Volcano Plot
-      div(class = "mb-3",
-        plotOutput("volcano_plot",
-                   height = "500px",
-                   width = paste0(input$plot_width, "px"))
-      ),
+      div(class = "mb-3", volcano_out),
       # DEGテーブル
       div(
         DTOutput("deg_table")
@@ -1690,12 +1817,10 @@ server <- function(input, output, session) {
     )
   })
 
-  # --- Volcano Plot ---
-  output$volcano_plot <- renderPlot({
-    req(deg_results())
+  # --- Volcano Plot ビルダー（静的/インタラクティブ共通） ---
+  build_volcano <- function(interactive = FALSE) {
     res <- deg_results()
     pt <- plot_theme()
-
     colors <- c("Up" = "#e74c3c", "Down" = "#3498db", "NS" = "#95a5a6")
 
     # ラベル用: top 10遺伝子
@@ -1703,8 +1828,18 @@ server <- function(input, output, session) {
     top_genes <- top_genes[order(top_genes$p_val_adj), ]
     top_genes <- head(top_genes, 10)
 
+    # インタラクティブ時はホバー用テキスト（遺伝子名＋統計量）
+    gp_aes <- if (interactive) {
+      aes(text = paste0(gene,
+                        "\navg_log2FC: ", round(avg_log2FC, 3),
+                        "\n-log10(padj): ", round(neg_log10_pval, 2),
+                        "\nstatus: ", significance))
+    } else {
+      aes()
+    }
+
     p <- ggplot(res, aes(x = avg_log2FC, y = neg_log10_pval, color = significance)) +
-      geom_point(alpha = 0.6, size = 1.5) +
+      geom_point(mapping = gp_aes, alpha = 0.6, size = 1.5) +
       scale_color_manual(values = colors) +
       geom_vline(xintercept = c(-input$deg_logfc, input$deg_logfc),
                  linetype = "dashed", color = pt$fg2, linewidth = 0.5) +
@@ -1728,8 +1863,8 @@ server <- function(input, output, session) {
         plot.title = element_text(size = 16, face = "bold", color = pt$accent)
       )
 
-    # トップ遺伝子ラベル
-    if (nrow(top_genes) > 0) {
+    # 静的のみ: トップ遺伝子ラベル（plotly はホバーで表示するため不要）
+    if (!interactive && nrow(top_genes) > 0) {
       p <- p + ggrepel::geom_text_repel(
         data = top_genes,
         aes(label = gene),
@@ -1739,9 +1874,25 @@ server <- function(input, output, session) {
         segment.color = pt$fg2
       )
     }
-
     p
+  }
+
+  # 静的版（plotly が無い場合のフォールバック）
+  output$volcano_plot <- renderPlot({
+    req(deg_results())
+    build_volcano(interactive = FALSE)
   }, bg = "transparent")
+
+  # インタラクティブ版（ドットにホバーで遺伝子名を表示）
+  if (requireNamespace("plotly", quietly = TRUE)) {
+    output$volcano_plotly <- plotly::renderPlotly({
+      req(deg_results())
+      p <- build_volcano(interactive = TRUE)
+      gp <- plotly::ggplotly(p, tooltip = "text")
+      bg <- plot_theme()$bg
+      plotly::layout(gp, paper_bgcolor = bg, plot_bgcolor = bg)
+    })
+  }
 
   # --- DEGテーブル ---
   output$deg_table <- renderDT({
