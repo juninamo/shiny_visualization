@@ -364,7 +364,9 @@ i18n <- list(
     corr_cor             = "相関",
     corr_second          = "次点リファレンス",
     corr_margin          = "マージン(1位-2位)",
-    corr_help            = "各アクティブクラスターの平均発現プロファイル（共通遺伝子をデータセット内でZ-score化）を、各リファレンスクラスターとピアソン相関で比較し、相関が最も高いものを「最も近いリファレンス」としています。マージン = 1位の相関 − 2位の相関（大きいほど対応が明確）。",
+    corr_proposed        = "提案クラスター名",
+    corr_conf            = "確信度",
+    corr_help            = "各アクティブクラスターの平均発現プロファイル（共通遺伝子をデータセット内でZ-score化）を、各リファレンスクラスターとピアソン相関で比較し、相関が最も高いものを「最も近いリファレンス」としています。マージン = 1位の相関 − 2位の相関（大きいほど対応が明確）。提案クラスター名 = 最も近いリファレンス名（1位と2位が僅差(マージン<0.05)の場合は両方を併記し「?」付き）。確信度は相関の高さとマージンから high/medium/low。",
     hm_no_genes          = "選択したマーカーがデータ内に見つかりません。",
     hm_pkg_missing       = "pheatmap パッケージが必要です: install.packages('pheatmap')",
     dot_scale            = "ドットサイズ",
@@ -509,7 +511,9 @@ i18n <- list(
     corr_cor             = "Correlation",
     corr_second          = "2nd reference",
     corr_margin          = "Margin(1st-2nd)",
-    corr_help            = "Each active cluster's mean-expression profile (over shared genes, z-scored within its dataset) is compared to every reference cluster by Pearson correlation; the highest correlation is the 'nearest reference'. Margin = 1st − 2nd correlation (larger = more confident match).",
+    corr_proposed        = "Proposed cluster name",
+    corr_conf            = "Confidence",
+    corr_help            = "Each active cluster's mean-expression profile (over shared genes, z-scored within its dataset) is compared to every reference cluster by Pearson correlation; the highest correlation is the 'nearest reference'. Margin = 1st − 2nd correlation (larger = more confident). Proposed cluster name = the nearest reference label (if 1st and 2nd are within margin <0.05, both are shown with a '?'). Confidence (high/medium/low) is from the correlation strength and margin.",
     hm_no_genes          = "None of the selected markers were found in the data.",
     hm_pkg_missing       = "The 'pheatmap' package is required: install.packages('pheatmap')",
     dot_scale            = "Dot size",
@@ -2523,11 +2527,22 @@ server <- function(input, output, session) {
     cmat[!is.finite(cmat)] <- 0
     corr <- do.call(rbind, lapply(rownames(cmat), function(ac) {
       v <- cmat[ac, ]; ord <- order(v, decreasing = TRUE)
-      data.frame(active = ac,
-                 best = colnames(cmat)[ord[1]], cor = round(v[ord[1]], 3),
-                 second = if (length(ord) >= 2) colnames(cmat)[ord[2]] else NA,
-                 cor2 = if (length(ord) >= 2) round(v[ord[2]], 3) else NA,
-                 margin = if (length(ord) >= 2) round(v[ord[1]] - v[ord[2]], 3) else NA,
+      best_name <- colnames(cmat)[ord[1]]
+      c1 <- v[ord[1]]
+      c2 <- if (length(ord) >= 2) v[ord[2]] else NA
+      sec <- if (length(ord) >= 2) colnames(cmat)[ord[2]] else NA
+      mg  <- if (!is.na(c2)) c1 - c2 else NA
+      # 確信度: 相関の高さ + 1位/2位のマージン
+      conf <- if (c1 >= 0.5 && (is.na(mg) || mg >= 0.05)) "high"
+              else if (c1 >= 0.3) "medium" else "low"
+      # 提案名: 最も近いリファレンス名。1位と2位が僅差なら両方併記して曖昧さを明示。
+      proposed <- if (!is.na(mg) && mg < 0.05 && !is.na(sec)) {
+        paste0(best_name, " / ", sec, " ?")
+      } else best_name
+      data.frame(active = ac, proposed_name = proposed, confidence = conf,
+                 best = best_name, cor = round(c1, 3),
+                 second = sec, cor2 = if (!is.na(c2)) round(c2, 3) else NA,
+                 margin = if (!is.na(mg)) round(mg, 3) else NA,
                  stringsAsFactors = FALSE)
     }))
     corr <- corr[order(-corr$cor), ]
@@ -2592,7 +2607,8 @@ server <- function(input, output, session) {
     cc <- dot_combined(); req(cc)
     datatable(cc$corr, rownames = FALSE, filter = "top",
               options = list(pageLength = 15, scrollX = TRUE, dom = "Blfrtip"),
-              colnames = c(t("corr_active"), t("corr_best"), t("corr_cor"),
+              colnames = c(t("corr_active"), t("corr_proposed"), t("corr_conf"),
+                           t("corr_best"), t("corr_cor"),
                            t("corr_second"), paste0(t("corr_cor"), "2"), t("corr_margin")))
   })
 
