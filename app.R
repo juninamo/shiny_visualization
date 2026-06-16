@@ -1262,13 +1262,14 @@ server <- function(input, output, session) {
     cols[1]
   })
 
-  # Composition のリファレンス X軸（未指定ならアクティブと同名→先頭）
+  # Composition のリファレンス X軸（複数選択可。未指定ならアクティブ→先頭）
   ref_comp_x <- reactive({
     cols <- ref_cat_cols()
     if (length(cols) == 0) return(NULL)
     sel <- input$comp_x_ref
-    if (!is.null(sel) && sel %in% cols) return(sel)
-    if (!is.null(input$comp_x) && input$comp_x %in% cols) return(input$comp_x)
+    if (!is.null(sel) && length(sel) > 0 && all(sel %in% cols)) return(sel)
+    ax <- input$comp_x
+    if (!is.null(ax) && all(ax %in% cols)) return(ax)
     cols[1]
   })
 
@@ -1278,11 +1279,12 @@ server <- function(input, output, session) {
     cols <- ref_cat_cols()
     if (length(cols) == 0) return(NULL)
     sel <- isolate(input$comp_x_ref)
-    if (is.null(sel) || !(sel %in% cols)) {
+    if (is.null(sel) || length(sel) == 0 || !all(sel %in% cols)) {
       ax <- isolate(input$comp_x)
-      sel <- if (!is.null(ax) && ax %in% cols) ax else cols[1]
+      sel <- if (!is.null(ax) && all(ax %in% cols)) ax else cols[1]
     }
-    selectInput("comp_x_ref", t("comp_x_ref"), choices = cols, selected = sel)
+    selectInput("comp_x_ref", t("comp_x_ref"), choices = cols, selected = sel,
+                multiple = TRUE)
   })
 
   output$ref_group_var_ui <- renderUI({
@@ -1419,7 +1421,7 @@ server <- function(input, output, session) {
       cat_cols[1]
     }
     cur_x <- isolate(input$comp_x)
-    x_sel <- if (!is.null(cur_x) && cur_x %in% cat_cols) cur_x else cat_cols[1]
+    x_sel <- if (!is.null(cur_x) && all(cur_x %in% cat_cols) && length(cur_x) > 0) cur_x else cat_cols[1]
     cur_facets <- isolate(input$comp_facets)
     facet_sel <- cur_facets[cur_facets %in% cat_cols]
     cur_scheme <- isolate(input$comp_color_scheme)
@@ -1438,7 +1440,7 @@ server <- function(input, output, session) {
             ),
             column(4,
               selectInput("comp_x", t("comp_x"),
-                          choices = cat_cols, selected = x_sel)
+                          choices = cat_cols, selected = x_sel, multiple = TRUE)
             ),
             column(4,
               selectInput("comp_facets", t("comp_facets"),
@@ -1504,17 +1506,23 @@ server <- function(input, output, session) {
     }
     facet_vars <- input$comp_facets
     facet_vars <- facet_vars[facet_vars %in% names(meta)]
-    group_vars <- unique(c(x_var, facet_vars))
-    key_cols <- unique(c(fill_var, group_vars))
+    x_cols <- x_var                              # X軸（複数選択可）
+    x_label <- paste(x_cols, collapse = "_")
+    key_cols <- unique(c(fill_var, x_cols, facet_vars))
 
-    # --- 割合を計算 (group_vars 内で proportion を算出) ---
+    # --- 割合を計算 (X×facet 内で proportion を算出) ---
     df <- meta[key_cols]
     for (cc in key_cols) df[[cc]] <- as.character(df[[cc]])
+    # 複数変数のX軸は paste して1列にまとめる
+    x_use <- if (length(x_cols) == 1) x_cols else "__x_combined"
+    if (length(x_cols) > 1) df[[x_use]] <- do.call(paste, c(df[x_cols], sep = "_"))
+    group_vars <- unique(c(x_use, facet_vars))
     # 描画クラスターに限定（選択範囲内で割合を再計算 → 例: T細胞内での割合）
     sel_clusters <- selected_clusters_v(clusters_sel, obj, fill_var)
     df <- df[df[[fill_var]] %in% sel_clusters, , drop = FALSE]
     if (nrow(df) == 0) return(empty_panel(t("ref_missing")))
-    counts <- aggregate(list(n = rep(1L, nrow(df))), by = df, FUN = sum)
+    agg_cols <- unique(c(fill_var, x_use, facet_vars))
+    counts <- aggregate(list(n = rep(1L, nrow(df))), by = df[agg_cols], FUN = sum)
     grp_key <- do.call(paste, c(counts[group_vars], sep = "\r"))
     totals <- tapply(counts$n, grp_key, sum)
     counts$proportion <- counts$n / as.numeric(totals[grp_key])
@@ -1525,8 +1533,8 @@ server <- function(input, output, session) {
     # factor を反転し凡例を反転して戻す → バーの上端と凡例の先頭を一致させる
     fill_levels <- if (interactive) rev(levs) else levs
     counts[[fill_var]] <- factor(counts[[fill_var]], levels = fill_levels)
-    counts[[x_var]] <- factor(counts[[x_var]],
-                              levels = cluster_level_order(unique(counts[[x_var]])))
+    counts[[x_use]] <- factor(counts[[x_use]],
+                              levels = cluster_level_order(unique(counts[[x_use]])))
 
     # --- 配色 ---
     if (identical(input$comp_color_scheme, "manual")) {
@@ -1545,18 +1553,18 @@ server <- function(input, output, session) {
     # ホバー用テキスト（クラスター名・X値・割合）
     counts$.hover <- paste0(
       fill_var, ": ", as.character(counts[[fill_var]]),
-      "\n", x_var, ": ", as.character(counts[[x_var]]),
+      "\n", x_label, ": ", as.character(counts[[x_use]]),
       "\n", t("comp_yaxis"), ": ", sprintf("%.1f%%", counts$proportion * 100),
       " (n=", counts$n, ")"
     )
 
     bar_aes <- if (interactive) aes(text = .hover) else aes()
-    p <- ggplot(counts, aes(x = .data[[x_var]], y = proportion,
+    p <- ggplot(counts, aes(x = .data[[x_use]], y = proportion,
                             fill = .data[[fill_var]])) +
       geom_bar(mapping = bar_aes, stat = "identity") +
       scale_fill_manual(values = fill_colors) +
       scale_y_continuous(labels = scales::percent_format()) +
-      labs(title = t("comp_title"), x = x_var, y = t("comp_yaxis"), fill = fill_var) +
+      labs(title = t("comp_title"), x = x_label, y = t("comp_yaxis"), fill = fill_var) +
       theme_bw(base_size = 13) +
       theme(
         axis.text.x = element_text(angle = 45, hjust = 1),
@@ -2175,9 +2183,43 @@ server <- function(input, output, session) {
           scale_radius(range = c(0, dot_scale), limits = c(0, 100))))
       g$x$data[[1]]$marker$size
     }
+    # ggplotly は facet の space="free_x" を無視し全パネルを等幅にするため、
+    # 各パネル幅をグループの遺伝子数に比例させ、ドット間隔をグループ間で揃える。
+    adjust_facet_widths <- function(gp, p) {
+      if (is.null(p$data) || is.null(p$data$group)) return(gp)
+      xaxes <- grep("^xaxis", names(gp$x$layout), value = TRUE)
+      if (length(xaxes) < 2) return(gp)
+      gl <- levels(droplevels(factor(p$data$group)))
+      counts <- vapply(gl, function(g) {
+        length(unique(as.character(p$data$feature[as.character(p$data$group) == g])))
+      }, integer(1))
+      counts <- counts[counts > 0]
+      if (length(counts) != length(xaxes)) return(gp)
+      # 現在のドメイン開始位置で左→右順にソート
+      starts_cur <- vapply(xaxes, function(nm) gp$x$layout[[nm]]$domain[1], numeric(1))
+      xord <- xaxes[order(starts_cur)]
+      n <- length(xord); gap <- 0.02
+      w <- counts / sum(counts) * (1 - gap * (n - 1))
+      new_starts <- c(0, utils::head(cumsum(w + gap), -1))
+      doms <- Map(function(s, wi) c(s, s + wi), new_starts, w)
+      centers <- vapply(doms, mean, numeric(1))
+      for (i in seq_len(n)) gp$x$layout[[xord[i]]]$domain <- doms[[i]]
+      # strip ラベル(annotation)を新パネル中心へ移動
+      ann <- gp$x$layout$annotations
+      if (!is.null(ann)) {
+        for (j in seq_along(ann)) {
+          idx <- match(ann[[j]]$text, names(counts))
+          if (!is.na(idx) && identical(ann[[j]]$xref, "paper")) {
+            gp$x$layout$annotations[[j]]$x <- centers[idx]
+          }
+        }
+      }
+      gp
+    }
     # ggplotly はサイズ凡例を落とすため、ダミーの凡例マーカーを追加する
     dot_to_plotly <- function(p, dot_scale) {
       gp <- plotly::plotly_build(plotly::ggplotly(p, tooltip = "text"))
+      gp <- adjust_facet_widths(gp, p)
       breaks <- c(25, 50, 75, 100)
       sizes <- tryCatch(dot_size_px(breaks, dot_scale), error = function(e) NULL)
       if (!is.null(sizes)) {
