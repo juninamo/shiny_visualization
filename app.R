@@ -397,6 +397,8 @@ i18n <- list(
     gsea_no_sets      = "重複する遺伝子セットがありません（パネルが小さい可能性）。",
     gsea_placeholder  = "設定して「GSEAを実行」ボタンを押してください",
     gsea_nes_title    = "上位パスウェイ (NES)",
+    gsea_need_deg     = "先に「DEG」タブでDEG解析を実行してください。",
+    gsea_uses_deg     = "GSEA は上の比較設定で実行した DEG 結果（avg_log2FC でランキング）を使用します。",
 
     # プレースホルダ
     placeholder_load  = "\U0001F4C2 RDSファイルを選択して「読み込む」ボタンを押してください",
@@ -530,6 +532,8 @@ i18n <- list(
     gsea_no_sets      = "No overlapping gene sets (panel may be small).",
     gsea_placeholder  = "Configure and click 'Run GSEA'",
     gsea_nes_title    = "Top pathways (NES)",
+    gsea_need_deg     = "Run a DEG analysis first (on the DEG sub-tab).",
+    gsea_uses_deg     = "GSEA uses the DEG result from the comparison above (genes ranked by avg_log2FC).",
 
     # Placeholders
     placeholder_load  = "\U0001F4C2 Select an RDS file and click 'Load'",
@@ -584,21 +588,13 @@ ui <- page_sidebar(
       )
     ),
 
+    # DEG と GSEA を1つの大タブにまとめ、同じ比較設定・同じDEG結果を共有する
     nav_panel(
-      title = "\U0001F4CA DEG",
+      title = "\U0001F4CA DEG / GSEA",
       value = "deg",
       card_body(
         class = "p-2",
         uiOutput("deg_panel_ui")
-      )
-    ),
-
-    nav_panel(
-      title = "\U0001F9EC GSEA",
-      value = "gsea",
-      card_body(
-        class = "p-2",
-        uiOutput("gsea_panel_ui")
       )
     ),
 
@@ -987,8 +983,14 @@ server <- function(input, output, session) {
         )
       ),
 
-      # 結果: Volcano + テーブル
-      uiOutput("deg_results_ui")
+      # 上の比較設定（同じDEG結果）を DEG / GSEA の内部タブで共有
+      navset_card_tab(
+        id = "deg_subtab",
+        nav_panel(title = "\U0001F4CA DEG", value = "deg_res",
+                  card_body(class = "p-2", uiOutput("deg_results_ui"))),
+        nav_panel(title = "\U0001F9EC GSEA", value = "gsea_res",
+                  card_body(class = "p-2", uiOutput("gsea_inner_ui")))
+      )
     )
   })
 
@@ -2758,34 +2760,23 @@ server <- function(input, output, session) {
     setNames(paste(colls$gs_cat, colls$gs_subcat, sep = "|"), labs)
   })
 
-  output$gsea_panel_ui <- renderUI({
+  # GSEA は DEG タブと同じ比較設定で得た deg_results() をランキングに使う
+  output$gsea_inner_ui <- renderUI({
     lang <- input$lang
-    if (!data_loaded()) return(placeholder_ui())
     if (!requireNamespace("fgsea", quietly = TRUE) ||
-        !requireNamespace("msigdbr", quietly = TRUE) ||
-        !requireNamespace("presto", quietly = TRUE)) {
+        !requireNamespace("msigdbr", quietly = TRUE)) {
       return(div(class = "text-center text-warning py-4",
-        h5("fgsea / msigdbr / presto が必要です: install.packages(c('msigdbr','presto')); BiocManager::install('fgsea')")))
+        h5("fgsea / msigdbr が必要です: install.packages('msigdbr'); BiocManager::install('fgsea')")))
     }
-    cat_cols <- meta_col_types()$cat
-    if (length(cat_cols) == 0) {
-      return(div(class = "text-center text-muted py-4", h5(t("comp_no_cat"))))
-    }
-    gv_sel <- isolate(input$gsea_group_var)
-    gv_sel <- if (!is.null(gv_sel) && gv_sel %in% cat_cols) gv_sel
-              else if ("seurat_clusters" %in% cat_cols) "seurat_clusters" else cat_cols[1]
     colls <- gsea_collections()
     coll_sel <- isolate(input$gsea_collection)
     if (is.null(coll_sel) || !(coll_sel %in% colls)) coll_sel <- "H|"
 
     tagList(
+      div(class = "alert alert-secondary py-2 small mb-2", icon("circle-info"),
+          " ", t("gsea_uses_deg")),
       div(class = "card mb-3", div(class = "card-body",
         h6(t("gsea_settings"), class = "card-title text-primary"),
-        fluidRow(
-          column(6, selectInput("gsea_group_var", t("gsea_group_var"),
-                                choices = cat_cols, selected = gv_sel)),
-          column(6, uiOutput("gsea_group1_ui"))
-        ),
         fluidRow(
           column(4, selectInput("gsea_species", t("gsea_species"),
                                 choices = c("Homo sapiens", "Mus musculus"),
@@ -2807,34 +2798,15 @@ server <- function(input, output, session) {
     )
   })
 
-  output$gsea_group1_ui <- renderUI({
-    req(input$gsea_group_var, seurat_obj())
-    gv <- input$gsea_group_var
-    if (!(gv %in% names(seurat_obj()@meta.data))) return(NULL)
-    groups <- cluster_level_order(seurat_obj()@meta.data[[gv]])
-    selectInput("gsea_group1", t("gsea_group1"), choices = groups, selected = groups[1])
-  })
-
   observeEvent(input$gsea_run, {
-    req(seurat_obj(), input$gsea_group_var, input$gsea_group1)
+    res <- deg_results()
+    if (is.null(res)) {
+      showNotification(t("gsea_need_deg"), type = "warning", id = "gsea"); return()
+    }
     showNotification(t("gsea_running"), id = "gsea", type = "message", duration = NULL)
     tryCatch({
-      obj <- seurat_obj()
-      gv <- input$gsea_group_var; g1 <- input$gsea_group1
-      mat <- get_expr_matrix(obj, rownames(obj))   # 全遺伝子 x 細胞
-      if (is.null(mat) || nrow(mat) < 5) {
-        showNotification(t("gsea_no_genes"), type = "error", id = "gsea"); return()
-      }
-      labels <- as.character(obj@meta.data[colnames(mat), gv])
-      keep <- !is.na(labels) & labels != ""
-      mat <- mat[, keep, drop = FALSE]; labels <- labels[keep]
-      grp <- ifelse(labels == g1, g1, "rest")
-      if (length(unique(grp)) < 2) {
-        showNotification(t("gsea_no_genes"), type = "error", id = "gsea"); return()
-      }
-      pr <- presto::wilcoxauc(mat, grp)
-      sub <- pr[pr$group == g1, , drop = FALSE]
-      ranks <- setNames(sub$logFC, sub$feature)
+      # DEG 結果の avg_log2FC で遺伝子をランキング
+      ranks <- stats::setNames(res$avg_log2FC, res$gene)
       ranks <- ranks[is.finite(ranks) & !is.na(names(ranks)) & !duplicated(names(ranks))]
       if (length(ranks) < 5) {
         showNotification(t("gsea_no_genes"), type = "error", id = "gsea"); return()
