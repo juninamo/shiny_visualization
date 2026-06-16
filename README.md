@@ -14,9 +14,7 @@ feature immediately.
 
 | Tab | What it does |
 |-----|--------------|
-| 🎻 **Violin** | Violin plot of a gene across a chosen grouping variable. |
-| 🗺️ **Feature UMAP** | Gene expression overlaid on the UMAP embedding. |
-| 🏷️ **Group UMAP** | UMAP colored by any categorical metadata column. |
+| 🎻 **Expression** | One tab with shared **gene** and **group-variable** controls and three inner sub-tabs: **Violin** (gene across groups), **Feature UMAP** (gene on the embedding), and **Group UMAP** (embedding colored by a metadata column; hover a point to see its cluster). |
 | 📊 **DEG** | Differential expression (`FindMarkers`) with a Volcano plot and a searchable table. Supports **categorical** comparisons (Group 1 vs one **or multiple** control groups, or "all others") and **numeric** comparisons (Top X% vs Bottom X% of a continuous score). The tested **genes** can be restricted to *all genes*, a *marker set*, a *set + your own genes*, or *only your own genes*. |
 | 🧱 **Composition** | Stacked proportion bar plot (e.g. cluster composition per donor), with optional **nested faceting** by additional variables (e.g. `site` + `study`). |
 | 🔥 **Heatmap / Dot** | One tab with shared gene/cluster controls and two inner sub-tabs: a **Heatmap** (mean-expression, optional per-gene Z-scoring and row/column clustering) and a **Dot Plot** (dot size = % expressing, color = scaled mean, optional marker-group facets). |

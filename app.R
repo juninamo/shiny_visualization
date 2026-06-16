@@ -525,30 +525,14 @@ ui <- page_sidebar(
   navset_card_tab(
     id = "main_tabs",
 
+    # Violin / Feature UMAP / Group UMAP \u30921\u3064\u306E\u5927\u30BF\u30D6\u306B\u307E\u3068\u3081\u3001
+    # \u907A\u4F1D\u5B50\u30FB\u30B0\u30EB\u30FC\u30D7\u5909\u6570\u306E\u9078\u629E\u3092\u305D\u306E\u4E2D\u3067\u5171\u6709\u3059\u308B
     nav_panel(
-      title = "\U0001F3BB Violin",
-      value = "violin",
+      title = "\U0001F3BB Expression",
+      value = "expression",
       card_body(
         class = "p-2",
-        uiOutput("violin_ui")
-      )
-    ),
-
-    nav_panel(
-      title = "\U0001F5FA\uFE0F Feature UMAP",
-      value = "feature_umap",
-      card_body(
-        class = "p-2",
-        uiOutput("feature_umap_ui")
-      )
-    ),
-
-    nav_panel(
-      title = "\U0001F3F7\uFE0F Group UMAP",
-      value = "group_umap",
-      card_body(
-        class = "p-2",
-        uiOutput("group_umap_ui")
+        uiOutput("expr_panel_ui")
       )
     ),
 
@@ -705,33 +689,6 @@ server <- function(input, output, session) {
 
       hr(),
 
-      h5(t("vis_settings"), class = "text-primary mb-2"),
-
-      selectizeInput(
-        "gene", t("gene_name"),
-        choices = NULL,
-        options = list(
-          placeholder = t("gene_placeholder"),
-          maxOptions = 50
-        )
-      ),
-
-      # 外部データベースリンク
-      uiOutput("external_links_ui"),
-
-      selectInput(
-        "group_var", t("group_var"),
-        choices = NULL
-      ),
-
-      # リファレンス用グループ変数（比較時のみ表示）
-      uiOutput("ref_group_var_ui"),
-
-      # UMAP reduction 選択（umap関連が複数ある場合のみ表示）
-      uiOutput("umap_reduction_ui"),
-
-      hr(),
-
       h5(t("plot_settings"), class = "text-primary mb-2"),
 
       sliderInput("pt_size", t("pt_size"), min = 0, max = 2, value = 0.3, step = 0.1),
@@ -773,39 +730,8 @@ server <- function(input, output, session) {
   # ==========================================================================
   # 言語切替時にすでに読込済みデータの選択肢を維持
   # ==========================================================================
-  observeEvent(input$lang, {
-    if (data_loaded()) {
-      obj <- seurat_obj()
-      meta <- obj@meta.data
-      col_types <- meta_col_types()
-      cat_cols <- col_types$cat
-      num_cols <- col_types$num
-
-      # 遺伝子リスト: 現在選択中を維持
-      current_gene <- input$gene
-      genes <- sort(rownames(obj))
-      updateSelectizeInput(session, "gene",
-                           choices = genes,
-                           selected = current_gene,
-                           server = TRUE)
-
-      # グループ変数: 現在の選択を維持
-      current_group <- input$group_var
-      updateSelectInput(session, "group_var",
-                        choices = cat_cols,
-                        selected = current_group)
-
-      # DEGグループ変数: ラベルを再生成
-      current_deg_var <- input$deg_group_var
-      deg_choices <- c(
-        setNames(cat_cols, paste0(t("deg_cat_prefix"), cat_cols)),
-        setNames(num_cols, paste0(t("deg_num_prefix"), num_cols))
-      )
-      updateSelectInput(session, "deg_group_var",
-                        choices = deg_choices,
-                        selected = current_deg_var)
-    }
-  }, ignoreInit = TRUE)
+  # 言語切替時、gene/group_var は expr_panel_ui が、deg_group_var は deg_panel_ui が
+  # それぞれ再描画して選択を維持するため、ここでの明示更新は不要。
 
   # ==========================================================================
   # RDSファイル読み込み
@@ -817,14 +743,8 @@ server <- function(input, output, session) {
     data_loaded(TRUE)
     deg_results(NULL)
 
-    # 遺伝子リスト（現在の選択を維持）
-    genes <- sort(rownames(obj))
-    cur_gene <- isolate(input$gene)
-    gsel <- if (!is.null(cur_gene) && cur_gene %in% genes) cur_gene else genes[1]
-    updateSelectizeInput(session, "gene", choices = genes,
-                         selected = gsel, server = TRUE)
-
-    # meta.dataの列を分類
+    # meta.dataの列を分類。gene/group_var は expr_panel_ui が、
+    # deg_group_var は deg_panel_ui が選択肢を組み立てるためここでは更新しない。
     meta <- obj@meta.data
     cat_cols <- names(meta)[sapply(meta, function(x) {
       is.factor(x) || is.character(x) || (is.numeric(x) && length(unique(x)) <= 50)
@@ -833,28 +753,6 @@ server <- function(input, output, session) {
       is.numeric(x) && length(unique(x)) > 50
     })]
     meta_col_types(list(cat = cat_cols, num = num_cols))
-
-    cur_group <- isolate(input$group_var)
-    default_group <- if (!is.null(cur_group) && cur_group %in% cat_cols) {
-      cur_group
-    } else if ("seurat_clusters" %in% cat_cols) {
-      "seurat_clusters"
-    } else {
-      cat_cols[1]
-    }
-    updateSelectInput(session, "group_var",
-                      choices = cat_cols, selected = default_group)
-
-    cur_deg <- isolate(input$deg_group_var)
-    deg_choices <- c(
-      setNames(cat_cols, paste0(t("deg_cat_prefix"), cat_cols)),
-      setNames(num_cols, paste0(t("deg_num_prefix"), num_cols))
-    )
-    deg_sel <- if (!is.null(cur_deg) && cur_deg %in% c(cat_cols, num_cols)) {
-      cur_deg
-    } else default_group
-    updateSelectInput(session, "deg_group_var",
-                      choices = deg_choices, selected = deg_sel)
 
     if (is.null(find_umap_reduction(obj))) {
       showNotification(t("notify_no_umap"), type = "warning", duration = 8)
@@ -1310,6 +1208,53 @@ server <- function(input, output, session) {
              else if ("seurat_clusters" %in% cols) "seurat_clusters" else cols[1]
     }
     selectInput("ref_group_var", t("ref_group_var"), choices = cols, selected = sel)
+  })
+
+  # ==========================================================================
+  # Expression 大タブ（Violin / Feature UMAP / Group UMAP の共通設定 + 内部タブ）
+  # ==========================================================================
+  output$expr_panel_ui <- renderUI({
+    lang <- input$lang
+    if (!data_loaded()) return(placeholder_ui())
+    ct <- meta_col_types()
+    cat_cols <- ct$cat
+    if (length(cat_cols) == 0) {
+      return(div(class = "text-center text-muted py-4", h5(t("comp_no_cat"))))
+    }
+    genes <- sort(rownames(seurat_obj()))
+    cur_gene <- isolate(input$gene)
+    gsel <- if (!is.null(cur_gene) && cur_gene %in% genes) cur_gene else genes[1]
+    cur_group <- isolate(input$group_var)
+    gv_sel <- if (!is.null(cur_group) && cur_group %in% cat_cols) {
+      cur_group
+    } else if ("seurat_clusters" %in% cat_cols) "seurat_clusters" else cat_cols[1]
+
+    tagList(
+      div(class = "card mb-3", div(class = "card-body",
+        fluidRow(
+          column(6,
+            selectizeInput("gene", t("gene_name"), choices = genes, selected = gsel,
+                           options = list(placeholder = t("gene_placeholder"),
+                                          maxOptions = 1000)),
+            uiOutput("external_links_ui")
+          ),
+          column(6,
+            selectInput("group_var", t("group_var"), choices = cat_cols, selected = gv_sel),
+            uiOutput("ref_group_var_ui"),
+            uiOutput("umap_reduction_ui")
+          )
+        )
+      )),
+      navset_card_tab(
+        id = "expr_subtab",
+        nav_panel(title = "\U0001F3BB Violin", value = "violin",
+                  card_body(class = "p-2", uiOutput("violin_ui"))),
+        nav_panel(title = "\U0001F5FA️ Feature UMAP", value = "feature_umap",
+                  card_body(class = "p-2", uiOutput("feature_umap_ui"))),
+        nav_panel(title = "\U0001F3F7️ Group UMAP", value = "group_umap",
+                  card_body(class = "p-2", uiOutput("group_umap_ui")))
+      )
+    )
   })
 
   # ==========================================================================
