@@ -279,6 +279,7 @@ i18n <- list(
     umap_reduction  = "UMAP (reduction)",
     plot_settings   = "\U0001F3A8 プロット設定",
     pt_size         = "点のサイズ",
+    umap_label_size = "UMAPラベルの大きさ",
     plot_height     = "プロットの高さ (px)",
     plot_width      = "プロットの幅 (px)",
     ref_plot_settings = "\U0001F3A8 プロット設定 (リファレンス)",
@@ -330,6 +331,8 @@ i18n <- list(
     marker_set           = "マーカーセット",
     marker_cluster       = "クラスター変数",
     draw_clusters        = "描画するクラスター",
+    coarse_var           = "絞り込み列 (大分類)",
+    coarse_values        = "絞り込む値",
     mk_feature_mode      = "遺伝子の選択",
     mk_feat_set          = "マーカーセット",
     mk_feat_set_custom   = "セット + 自分で選択",
@@ -384,6 +387,7 @@ i18n <- list(
     umap_reduction  = "UMAP (reduction)",
     plot_settings   = "\U0001F3A8 Plot Settings",
     pt_size         = "Point Size",
+    umap_label_size = "UMAP Label Size",
     plot_height     = "Plot Height (px)",
     plot_width      = "Plot Width (px)",
     ref_plot_settings = "\U0001F3A8 Plot Settings (reference)",
@@ -435,6 +439,8 @@ i18n <- list(
     marker_set           = "Marker Set",
     marker_cluster       = "Cluster Variable",
     draw_clusters        = "Clusters to plot",
+    coarse_var           = "Filter column (coarse)",
+    coarse_values        = "Filter values",
     mk_feature_mode      = "Gene selection",
     mk_feat_set          = "Marker set",
     mk_feat_set_custom   = "Set + custom",
@@ -724,6 +730,7 @@ server <- function(input, output, session) {
       h5(t("plot_settings"), class = "text-primary mb-2"),
 
       sliderInput("pt_size", t("pt_size"), min = 0, max = 2, value = 0.3, step = 0.1),
+      sliderInput("umap_label_size", t("umap_label_size"), min = 2, max = 12, value = 4, step = 0.5),
       sliderInput("plot_height", t("plot_height"), min = 400, max = 3000, value = 600, step = 50),
       sliderInput("plot_width", t("plot_width"), min = 400, max = 4000, value = 800, step = 50),
 
@@ -1371,7 +1378,7 @@ server <- function(input, output, session) {
     side_by_side_ui("group_umap_plot", "group_umap_plot_ref", !is.null(ref_obj()))
   })
 
-  build_group_umap <- function(obj, group_var, reduction, pt_size) {
+  build_group_umap <- function(obj, group_var, reduction, pt_size, label_size = 4) {
     pt <- plot_theme()
     if (is.null(reduction)) return(empty_panel(t("no_umap_title")))
     if (is.null(group_var) || !(group_var %in% names(obj@meta.data))) return(empty_panel(t("ref_missing")))
@@ -1380,8 +1387,10 @@ server <- function(input, output, session) {
       as.character(obj@meta.data[[group_var]]),
       levels = cluster_level_order(obj@meta.data[[group_var]])
     )
+    # repel=TRUE でラベルの重なりを回避、label.size でサイズ調整
     p <- DimPlot(obj, reduction = reduction, group.by = group_var,
-                 label = TRUE, pt.size = pt_size) + pt$theme_legend +
+                 label = TRUE, label.size = label_size, repel = TRUE,
+                 pt.size = pt_size) + pt$theme_legend +
       theme(legend.position = "bottom")
     lin_cols <- lineage_colors_or_null(obj@meta.data[[group_var]])
     if (!is.null(lin_cols)) p <- p + scale_color_manual(values = lin_cols)
@@ -1390,12 +1399,14 @@ server <- function(input, output, session) {
 
   output$group_umap_plot <- renderPlot({
     req(seurat_obj(), input$group_var, has_umap())
-    build_group_umap(seurat_obj(), input$group_var, umap_reduction(), act_pt())
+    build_group_umap(seurat_obj(), input$group_var, umap_reduction(), act_pt(),
+                     input$umap_label_size %||% 4)
   }, bg = "transparent")
 
   output$group_umap_plot_ref <- renderPlot({
     req(ref_obj(), has_umap())
-    build_group_umap(ref_obj(), ref_group_var(), find_umap_reduction(ref_obj()), ref_pt())
+    build_group_umap(ref_obj(), ref_group_var(), find_umap_reduction(ref_obj()), ref_pt(),
+                     input$umap_label_size %||% 4)
   }, bg = "transparent")
 
   # ==========================================================================
@@ -1448,7 +1459,8 @@ server <- function(input, output, session) {
                           multiple = TRUE)
             )
           ),
-          # 描画するクラスター（選択した範囲内で割合を再計算）
+          # 大分類で絞り込み → 描画するクラスター（選択範囲内で割合を再計算）
+          coarse_block("comp", cat_cols),
           uiOutput("comp_clusters_ui"),
           # リファレンス用のクラスター選択（比較時のみ）
           ref_cluster_controls_ui("comp"),
@@ -1729,7 +1741,8 @@ server <- function(input, output, session) {
         h6(t("marker_settings"), class = "card-title text-primary"),
         top_row,
         gene_block,
-        # 描画するクラスターの選択（クラスター変数に追従）
+        # 大分類で絞り込み → 描画するクラスターの選択（2段階）
+        coarse_block(prefix, cat_cols),
         uiOutput(paste0(prefix, "_clusters_ui")),
         # リファレンス用のクラスター選択（比較時のみ）
         ref_cluster_controls_ui(prefix),
@@ -1767,12 +1780,49 @@ server <- function(input, output, session) {
   }
 
   # --- 描画クラスター選択UI（クラスター変数に追従、デフォルトは全選択） ---
+  # 大分類(coarse)列で絞ったあとの対象クラスター（ネスト2段階選択の1段目）
+  clusters_in_coarse <- function(obj, cluster_var, coarse_var, coarse_sel) {
+    levs <- cluster_level_order(obj@meta.data[[cluster_var]])
+    if (is.null(coarse_var) || identical(coarse_var, "__none__") ||
+        !(coarse_var %in% names(obj@meta.data)) ||
+        is.null(coarse_sel) || length(coarse_sel) == 0) return(levs)
+    cl <- as.character(obj@meta.data[[cluster_var]])
+    co <- as.character(obj@meta.data[[coarse_var]])
+    keep <- unique(cl[co %in% coarse_sel])
+    levs[levs %in% keep]
+  }
+
+  # coarse 列の選択 + 値選択UI（suffix="_ref" で reference 用）
+  coarse_block <- function(prefix, cat_cols, suffix = "") {
+    id_var <- paste0(prefix, "_coarse_var", suffix)
+    tagList(
+      selectInput(id_var, t("coarse_var"),
+                  choices = c(setNames("__none__", t("ref_none")), cat_cols),
+                  selected = isolate(input[[id_var]]) %||% "__none__"),
+      uiOutput(paste0(prefix, "_coarse", suffix, "_ui"))
+    )
+  }
+  # coarse 値の選択UI（coarse_var に追従）
+  coarse_values_ui <- function(prefix, obj, suffix = "") {
+    if (is.null(obj)) return(NULL)
+    cvar <- input[[paste0(prefix, "_coarse_var", suffix)]]
+    if (is.null(cvar) || identical(cvar, "__none__") || !(cvar %in% names(obj@meta.data))) return(NULL)
+    levs <- cluster_level_order(obj@meta.data[[cvar]])
+    id_sel <- paste0(prefix, "_coarse_sel", suffix)
+    prev <- isolate(input[[id_sel]])
+    sel <- if (!is.null(prev) && length(prev) > 0 && all(prev %in% levs)) prev else levs
+    selectizeInput(id_sel, t("coarse_values"), choices = levs, selected = sel,
+                   multiple = TRUE, options = list(plugins = list("remove_button")))
+  }
+
   cluster_select_ui <- function(prefix) {
     obj <- seurat_obj()
     if (is.null(obj)) return(NULL)
     cvar <- input[[paste0(prefix, "_cluster")]]
     if (is.null(cvar) || !(cvar %in% names(obj@meta.data))) return(NULL)
-    levs <- cluster_level_order(obj@meta.data[[cvar]])
+    levs <- clusters_in_coarse(obj, cvar,
+                               input[[paste0(prefix, "_coarse_var")]],
+                               input[[paste0(prefix, "_coarse_sel")]])
     prev <- isolate(input[[paste0(prefix, "_clusters_sel")]])
     sel <- if (!is.null(prev) && length(prev) > 0 && all(prev %in% levs)) prev else levs
     selectizeInput(
@@ -1824,16 +1874,19 @@ server <- function(input, output, session) {
       h6(t("ref_settings_label"), class = "text-muted mb-2"),
       selectInput(paste0(prefix, "_cluster_ref"), t("ref_marker_cluster"),
                   choices = cols, selected = sel),
+      coarse_block(prefix, cols, suffix = "_ref"),
       uiOutput(paste0(prefix, "_clusters_ref_ui"))
     )
   }
-  # リファレンスの描画クラスター サブ選択UI（ref_tab_cluster に追従）
+  # リファレンスの描画クラスター サブ選択UI（ref_tab_cluster + coarse に追従）
   ref_cluster_select_ui <- function(prefix) {
     rb <- ref_obj()
     if (is.null(rb)) return(NULL)
     cvar <- ref_tab_cluster(prefix)
     if (is.null(cvar) || !(cvar %in% names(rb@meta.data))) return(NULL)
-    levs <- cluster_level_order(rb@meta.data[[cvar]])
+    levs <- clusters_in_coarse(rb, cvar,
+                               input[[paste0(prefix, "_coarse_var_ref")]],
+                               input[[paste0(prefix, "_coarse_sel_ref")]])
     prev <- isolate(input[[paste0(prefix, "_clusters_sel_ref")]])
     sel <- if (!is.null(prev) && length(prev) > 0 && all(prev %in% levs)) prev else levs
     selectizeInput(
@@ -1873,6 +1926,13 @@ server <- function(input, output, session) {
   output$hm_clusters_ref_ui   <- renderUI({ ref_cluster_select_ui("hm") })
   output$dot_clusters_ref_ui  <- renderUI({ ref_cluster_select_ui("dot") })
   output$comp_clusters_ref_ui <- renderUI({ ref_cluster_select_ui("comp") })
+  # coarse(大分類)の値選択UI（active / reference）
+  output$hm_coarse_ui   <- renderUI({ coarse_values_ui("hm", seurat_obj()) })
+  output$dot_coarse_ui  <- renderUI({ coarse_values_ui("dot", seurat_obj()) })
+  output$comp_coarse_ui <- renderUI({ coarse_values_ui("comp", seurat_obj()) })
+  output$hm_coarse_ref_ui   <- renderUI({ coarse_values_ui("hm", ref_obj(), "_ref") })
+  output$dot_coarse_ref_ui  <- renderUI({ coarse_values_ui("dot", ref_obj(), "_ref") })
+  output$comp_coarse_ref_ui <- renderUI({ coarse_values_ui("comp", ref_obj(), "_ref") })
 
   # 描画実行ボタン（自動描画せず、押したときだけ描画）
   plot_run_btn <- function(id) {

@@ -75,11 +75,14 @@ obj <- CreateSeuratObject(counts = counts, project = "demo")
 obj <- NormalizeData(obj, verbose = FALSE)
 
 # --- 5. Metadata -------------------------------------------------------------
-# Conventional numeric cluster id + descriptive lineage label
+# Conventional numeric cluster id + descriptive lineage label.
+# lineage is derived PER CELL from cell_type so it correctly nests the cluster
+# (e.g. 3_TNK_ILC -> TNK_ILC), which the app's 2-stage cluster filter relies on.
+cell_lineage <- sub("^\\d+_", "", cell_clusters)
 obj$seurat_clusters <- factor(sub("_.*$", "", cell_clusters),
                               levels = as.character(0:6))
 obj$cell_type <- factor(cell_clusters, levels = clusters)
-obj$lineage   <- factor(cluster_lineage, levels = unique(cluster_lineage))
+obj$lineage   <- factor(cell_lineage, levels = unique(cluster_lineage))
 
 # Donors nested within site + study (for the Composition tab)
 donor_table <- data.frame(
@@ -97,7 +100,7 @@ obj$site  <- donor_table$site[cell_donor_idx]
 base_score <- c(Epithelial = 0.2, Stromal_Endothelial = 0.3,
                 TNK_ILC = 0.7, B_Plasma = 0.5, Myeloid = 0.9)
 obj$inflammation_score <- as.numeric(
-  base_score[cluster_lineage] + rnorm(n_cells, sd = 0.15)
+  base_score[cell_lineage] + rnorm(n_cells, sd = 0.15)
 )
 
 # --- 6. A fake UMAP embedding (clusters separated; no uwot needed) -----------
