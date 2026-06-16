@@ -239,8 +239,12 @@ i18n <- list(
   ja = list(
     # サイドバー
     data_load       = "\U0001F4C2 データ読み込み",
-    rds_file        = "RDSファイル",
+    rds_file        = "RDSファイル (複数選択可)",
     load_btn        = "読み込む",
+    active_ds       = "アクティブ",
+    ref_ds          = "リファレンス (比較用)",
+    ref_none        = "（なし）",
+    ref_missing     = "リファレンスに存在しません",
     vis_settings    = "\U0001F52C 可視化設定",
     gene_name       = "遺伝子名",
     gene_placeholder = "ファイルを読み込んでください",
@@ -330,8 +334,12 @@ i18n <- list(
   en = list(
     # Sidebar
     data_load       = "\U0001F4C2 Load Data",
-    rds_file        = "RDS File",
+    rds_file        = "RDS File (multi-select)",
     load_btn        = "Load",
+    active_ds       = "Active dataset",
+    ref_ds          = "Reference (compare)",
+    ref_none        = "(none)",
+    ref_missing     = "Not present in reference",
     vis_settings    = "\U0001F52C Visualization",
     gene_name       = "Gene",
     gene_placeholder = "Load an RDS file first",
@@ -603,6 +611,15 @@ server <- function(input, output, session) {
   deg_results <- reactiveVal(NULL)
   meta_col_types <- reactiveVal(list(cat = character(0), num = character(0)))
   deg_title_label <- reactiveVal("")
+  loaded_objs <- reactiveVal(list())   # 読み込んだデータセット (名前付きリスト)
+
+  # --- リファレンス(比較用)データセット ---
+  ref_obj <- reactive({
+    objs <- loaded_objs()
+    ds <- input$ref_ds
+    if (is.null(ds) || identical(ds, "__none__") || is.null(objs[[ds]])) return(NULL)
+    objs[[ds]]
+  })
 
   # ==========================================================================
   # 動的サイドバー
@@ -617,13 +634,17 @@ server <- function(input, output, session) {
       selectInput(
         "rds_file", t("rds_file"),
         choices = rds_files,
-        selected = rds_files[1]
+        selected = rds_files[1],
+        multiple = TRUE
       ),
       actionButton(
         "load_btn", t("load_btn"),
         class = "btn-primary w-100 mb-3",
         icon = icon("upload")
       ),
+
+      # アクティブ / リファレンス データセット選択（読み込み後に表示）
+      uiOutput("dataset_selectors_ui"),
 
       hr(),
 
@@ -725,84 +746,111 @@ server <- function(input, output, session) {
   # ==========================================================================
   # RDSファイル読み込み
   # ==========================================================================
+  # --- アクティブにするデータセットで各セレクタ・メタ情報を更新 ---
+  # 現在の遺伝子/グループ選択はデータセット切替後も（存在すれば）維持する。
+  activate_dataset <- function(obj) {
+    seurat_obj(obj)
+    data_loaded(TRUE)
+    deg_results(NULL)
+
+    # 遺伝子リスト（現在の選択を維持）
+    genes <- sort(rownames(obj))
+    cur_gene <- isolate(input$gene)
+    gsel <- if (!is.null(cur_gene) && cur_gene %in% genes) cur_gene else genes[1]
+    updateSelectizeInput(session, "gene", choices = genes,
+                         selected = gsel, server = TRUE)
+
+    # meta.dataの列を分類
+    meta <- obj@meta.data
+    cat_cols <- names(meta)[sapply(meta, function(x) {
+      is.factor(x) || is.character(x) || (is.numeric(x) && length(unique(x)) <= 50)
+    })]
+    num_cols <- names(meta)[sapply(meta, function(x) {
+      is.numeric(x) && length(unique(x)) > 50
+    })]
+    meta_col_types(list(cat = cat_cols, num = num_cols))
+
+    cur_group <- isolate(input$group_var)
+    default_group <- if (!is.null(cur_group) && cur_group %in% cat_cols) {
+      cur_group
+    } else if ("seurat_clusters" %in% cat_cols) {
+      "seurat_clusters"
+    } else {
+      cat_cols[1]
+    }
+    updateSelectInput(session, "group_var",
+                      choices = cat_cols, selected = default_group)
+
+    cur_deg <- isolate(input$deg_group_var)
+    deg_choices <- c(
+      setNames(cat_cols, paste0(t("deg_cat_prefix"), cat_cols)),
+      setNames(num_cols, paste0(t("deg_num_prefix"), num_cols))
+    )
+    deg_sel <- if (!is.null(cur_deg) && cur_deg %in% c(cat_cols, num_cols)) {
+      cur_deg
+    } else default_group
+    updateSelectInput(session, "deg_group_var",
+                      choices = deg_choices, selected = deg_sel)
+
+    if (is.null(find_umap_reduction(obj))) {
+      showNotification(t("notify_no_umap"), type = "warning", duration = 8)
+    }
+  }
+
+  # --- 複数RDSの読み込み ---
   observeEvent(input$load_btn, {
     req(input$rds_file)
-
     showNotification(t("notify_loading"), type = "message", id = "loading")
-
     tryCatch({
-      file_path <- file.path(app_dir, input$rds_file)
-      obj <- readRDS(file_path)
-
-      # Seuratオブジェクトか確認
-      if (!inherits(obj, "Seurat")) {
-        showNotification(t("notify_not_seurat"),
-                         type = "error", id = "loading")
+      objs <- list()
+      for (f in input$rds_file) {
+        o <- readRDS(file.path(app_dir, f))
+        if (inherits(o, "Seurat")) objs[[f]] <- o
+      }
+      if (length(objs) == 0) {
+        showNotification(t("notify_not_seurat"), type = "error", id = "loading")
         return()
       }
+      loaded_objs(objs)
+      activate_dataset(objs[[1]])
 
-      seurat_obj(obj)
-      data_loaded(TRUE)
-      deg_results(NULL)
-
-      # 遺伝子リストを更新
-      genes <- sort(rownames(obj))
-      updateSelectizeInput(session, "gene",
-                           choices = genes,
-                           selected = genes[1],
-                           server = TRUE)
-
-      # meta.dataの列を分類
-      meta <- obj@meta.data
-      cat_cols <- names(meta)[sapply(meta, function(x) {
-        is.factor(x) || is.character(x) || (is.numeric(x) && length(unique(x)) <= 50)
-      })]
-      num_cols <- names(meta)[sapply(meta, function(x) {
-        is.numeric(x) && length(unique(x)) > 50
-      })]
-      meta_col_types(list(cat = cat_cols, num = num_cols))
-
-      # seurat_clustersを優先的にデフォルトにする
-      default_group <- if ("seurat_clusters" %in% cat_cols) {
-        "seurat_clusters"
-      } else {
-        cat_cols[1]
-      }
-
-      updateSelectInput(session, "group_var",
-                        choices = cat_cols,
-                        selected = default_group)
-
-      # DEG用のグループ変数: カテゴリカル + 数値を表示
-      deg_choices <- c(
-        setNames(cat_cols, paste0(t("deg_cat_prefix"), cat_cols)),
-        setNames(num_cols, paste0(t("deg_num_prefix"), num_cols))
-      )
-      updateSelectInput(session, "deg_group_var",
-                        choices = deg_choices,
-                        selected = default_group)
-
-      # UMAP存在チェック（"umap" がなければ "umap" を含む reduction を探す）
-      has_umap <- !is.null(find_umap_reduction(obj))
-      if (!has_umap) {
-        showNotification(
-          t("notify_no_umap"),
-          type = "warning", duration = 8
-        )
-      }
-
-      n_cells <- ncol(obj)
-      n_genes <- nrow(obj)
+      o1 <- objs[[1]]
       showNotification(
         sprintf(t("notify_load_done"),
-                format(n_cells, big.mark = ","),
-                format(n_genes, big.mark = ",")),
+                format(ncol(o1), big.mark = ","),
+                format(nrow(o1), big.mark = ",")),
         type = "message", id = "loading", duration = 5
       )
-
     }, error = function(e) {
       showNotification(paste(t("notify_error"), e$message), type = "error", id = "loading")
     })
+  })
+
+  # --- アクティブデータセットの切り替え ---
+  observeEvent(input$active_ds, {
+    objs <- loaded_objs()
+    if (!is.null(input$active_ds) && !is.null(objs[[input$active_ds]])) {
+      activate_dataset(objs[[input$active_ds]])
+    }
+  }, ignoreInit = TRUE)
+
+  # --- アクティブ / リファレンス セレクタ ---
+  output$dataset_selectors_ui <- renderUI({
+    lang <- input$lang
+    objs <- loaded_objs()
+    if (length(objs) == 0) return(NULL)
+    nms <- names(objs)
+    active_sel <- isolate(input$active_ds)
+    if (is.null(active_sel) || !(active_sel %in% nms)) active_sel <- nms[1]
+    ref_sel <- isolate(input$ref_ds)
+    if (is.null(ref_sel) || !(ref_sel %in% c("__none__", nms))) ref_sel <- "__none__"
+    tagList(
+      selectInput("active_ds", t("active_ds"), choices = nms, selected = active_sel),
+      selectInput("ref_ds", t("ref_ds"),
+                  choices = c(setNames("__none__", t("ref_none")), setNames(nms, nms)),
+                  selected = ref_sel),
+      div(class = "mb-3")
+    )
   })
 
   # ==========================================================================
@@ -1064,6 +1112,27 @@ server <- function(input, output, session) {
   }
 
   # ==========================================================================
+  # 比較表示（アクティブ vs リファレンス）ヘルパー
+  # ==========================================================================
+  active_name <- reactive({ input$active_ds %||% "" })
+  ref_name    <- reactive({ if (is.null(ref_obj())) NULL else input$ref_ds })
+
+  # 欠損時のプレースホルダ ggplot
+  empty_panel <- function(msg) {
+    ggplot() +
+      annotate("text", x = 0, y = 0, label = msg, size = 5, color = "grey50") +
+      theme_void()
+  }
+
+  # 2つのggplotを左右に並べる（refがNULLなら単独）。各パネルに名前を付与。
+  combine_gg <- function(p_active, p_ref, name_active = NULL, name_ref = NULL) {
+    if (is.null(p_ref)) return(p_active)
+    if (!is.null(name_active)) p_active <- p_active + ggtitle(name_active)
+    if (!is.null(name_ref))    p_ref    <- p_ref + ggtitle(name_ref)
+    patchwork::wrap_plots(p_active, p_ref, ncol = 2)
+  }
+
+  # ==========================================================================
   # Violin Plot
   # ==========================================================================
   output$violin_ui <- renderUI({
@@ -1073,20 +1142,27 @@ server <- function(input, output, session) {
                width = paste0(input$plot_width, "px"))
   })
 
-  output$violin_plot <- renderPlot({
-    req(seurat_obj(), input$gene, input$group_var)
-    obj <- seurat_obj()
+  build_violin <- function(obj) {
     pt <- plot_theme()
+    if (!(input$gene %in% rownames(obj))) return(empty_panel(t("ref_missing")))
+    if (!(input$group_var %in% names(obj@meta.data))) return(empty_panel(t("ref_missing")))
     # クラスターを系統順 factor に並べ替え（軸・色順を統一）
     Idents(obj) <- factor(
       as.character(obj@meta.data[[input$group_var]]),
       levels = cluster_level_order(obj@meta.data[[input$group_var]])
     )
     p <- VlnPlot(obj, features = input$gene, pt.size = input$pt_size) + pt$theme
-    # 系統(lineage)グラデーション配色（形式が合えば適用、合わなければデフォルト）
     lin_cols <- lineage_colors_or_null(levels(Idents(obj)))
     if (!is.null(lin_cols)) p <- p + scale_fill_manual(values = lin_cols)
     p
+  }
+
+  output$violin_plot <- renderPlot({
+    req(seurat_obj(), input$gene, input$group_var)
+    rb <- ref_obj()
+    pa <- build_violin(seurat_obj())
+    pr <- if (!is.null(rb)) build_violin(rb) else NULL
+    combine_gg(pa, pr, active_name(), ref_name())
   }, bg = "transparent")
 
   # ==========================================================================
@@ -1100,12 +1176,20 @@ server <- function(input, output, session) {
                width = paste0(input$plot_width, "px"))
   })
 
+  build_feature <- function(obj, reduction) {
+    pt <- plot_theme()
+    if (is.null(reduction)) return(empty_panel(t("no_umap_title")))
+    if (!(input$gene %in% rownames(obj))) return(empty_panel(t("ref_missing")))
+    FeaturePlot(obj, features = input$gene, reduction = reduction,
+                pt.size = input$pt_size) + pt$theme_legend
+  }
+
   output$feature_umap_plot <- renderPlot({
     req(seurat_obj(), input$gene, has_umap())
-    obj <- seurat_obj()
-    pt <- plot_theme()
-    FeaturePlot(obj, features = input$gene, reduction = umap_reduction(),
-                pt.size = input$pt_size) + pt$theme_legend
+    rb <- ref_obj()
+    pa <- build_feature(seurat_obj(), umap_reduction())
+    pr <- if (!is.null(rb)) build_feature(rb, find_umap_reduction(rb)) else NULL
+    combine_gg(pa, pr, active_name(), ref_name())
   }, bg = "transparent")
 
   # ==========================================================================
@@ -1119,21 +1203,28 @@ server <- function(input, output, session) {
                width = paste0(input$plot_width, "px"))
   })
 
-  output$group_umap_plot <- renderPlot({
-    req(seurat_obj(), input$group_var, has_umap())
-    obj <- seurat_obj()
+  build_group_umap <- function(obj, reduction) {
     pt <- plot_theme()
+    if (is.null(reduction)) return(empty_panel(t("no_umap_title")))
+    if (!(input$group_var %in% names(obj@meta.data))) return(empty_panel(t("ref_missing")))
     # クラスターを系統順 factor に並べ替え（凡例・色順を統一）
     obj@meta.data[[input$group_var]] <- factor(
       as.character(obj@meta.data[[input$group_var]]),
       levels = cluster_level_order(obj@meta.data[[input$group_var]])
     )
-    p <- DimPlot(obj, reduction = umap_reduction(), group.by = input$group_var,
+    p <- DimPlot(obj, reduction = reduction, group.by = input$group_var,
                  label = TRUE, pt.size = input$pt_size) + pt$theme_legend
-    # 系統(lineage)グラデーション配色（形式が合えば適用、合わなければデフォルト）
     lin_cols <- lineage_colors_or_null(obj@meta.data[[input$group_var]])
     if (!is.null(lin_cols)) p <- p + scale_color_manual(values = lin_cols)
     p
+  }
+
+  output$group_umap_plot <- renderPlot({
+    req(seurat_obj(), input$group_var, has_umap())
+    rb <- ref_obj()
+    pa <- build_group_umap(seurat_obj(), umap_reduction())
+    pr <- if (!is.null(rb)) build_group_umap(rb, find_umap_reduction(rb)) else NULL
+    combine_gg(pa, pr, active_name(), ref_name())
   }, bg = "transparent")
 
   # ==========================================================================
@@ -1211,15 +1302,14 @@ server <- function(input, output, session) {
                width = paste0(input$plot_width, "px"))
   })
 
-  # 「描画」ボタンを押したときだけ計算
-  comp_plot_obj <- eventReactive(input$comp_run, {
-    req(seurat_obj(), input$comp_cluster, input$comp_x)
-    obj <- seurat_obj()
+  # 組成プロットを1データセットから構築
+  build_comp <- function(obj) {
     pt <- plot_theme()
     meta <- obj@meta.data
 
     fill_var <- input$comp_cluster
     x_var <- input$comp_x
+    if (!all(c(fill_var, x_var) %in% names(meta))) return(empty_panel(t("ref_missing")))
     facet_vars <- input$comp_facets
     facet_vars <- facet_vars[facet_vars %in% names(meta)]
     group_vars <- unique(c(x_var, facet_vars))
@@ -1231,7 +1321,7 @@ server <- function(input, output, session) {
     # 描画クラスターに限定（選択範囲内で割合を再計算 → 例: T細胞内での割合）
     sel_clusters <- selected_clusters("comp", obj, fill_var)
     df <- df[df[[fill_var]] %in% sel_clusters, , drop = FALSE]
-    validate(need(nrow(df) > 0, t("comp_no_cat")))
+    if (nrow(df) == 0) return(empty_panel(t("ref_missing")))
     counts <- aggregate(list(n = rep(1L, nrow(df))), by = df, FUN = sum)
     grp_key <- do.call(paste, c(counts[group_vars], sep = "\r"))
     totals <- tapply(counts$n, grp_key, sum)
@@ -1289,6 +1379,15 @@ server <- function(input, output, session) {
     }
 
     p
+  }
+
+  # 「描画」ボタンを押したときだけ計算（アクティブ + リファレンス）
+  comp_plot_obj <- eventReactive(input$comp_run, {
+    req(seurat_obj(), input$comp_cluster, input$comp_x)
+    rb <- ref_obj()
+    pa <- build_comp(seurat_obj())
+    pr <- if (!is.null(rb)) build_comp(rb) else NULL
+    combine_gg(pa, pr, active_name(), ref_name())
   }, ignoreInit = TRUE)
 
   output$comp_plot <- renderPlot({ comp_plot_obj() }, bg = "transparent")
@@ -1521,17 +1620,14 @@ server <- function(input, output, session) {
   })
 
   # 「描画」ボタンを押したときだけ計算（自動描画しない）
-  heatmap_spec <- eventReactive(input$hm_run, {
-    req(seurat_obj(), input$hm_cluster,
-        requireNamespace("pheatmap", quietly = TRUE))
-    obj <- seurat_obj()
-
+  # 1データセットの平均発現マトリクス（Z-score・クリップ済み）を構築
+  build_hm_mat <- function(obj) {
     genes <- resolve_marker_genes("hm")
-    validate(need(length(genes) > 0, t("hm_no_genes")))
+    if (length(genes) == 0) return(NULL)
+    if (!(input$hm_cluster %in% names(obj@meta.data))) return(NULL)
     clusters <- selected_clusters("hm", obj, input$hm_cluster)
-    avg <- marker_avg_matrix(obj, input$hm_cluster, genes, clusters)  # genes x clusters
-    validate(need(!is.null(avg) && nrow(avg) > 0, t("hm_no_genes")))
-
+    avg <- marker_avg_matrix(obj, input$hm_cluster, genes, clusters)
+    if (is.null(avg) || nrow(avg) == 0) return(NULL)
     mat <- avg
     if (isTRUE(input$hm_scale)) {
       # NOTE: server scope の t() は翻訳ヘルパーなので転置は base::t() を使う
@@ -1540,30 +1636,51 @@ server <- function(input, output, session) {
       mat[mat > 2] <- 2
       mat[mat < -2] <- -2
     }
-    validate(need(nrow(mat) > 0, t("hm_no_genes")))
-    list(mat = mat,
+    if (nrow(mat) == 0) return(NULL)
+    mat
+  }
+
+  # pheatmap の gtable を返す（行=クラスター, 列=遺伝子, 遺伝子名を垂直ラベル）
+  hm_grob <- function(mat, main, cluster_rows, cluster_cols) {
+    pheatmap::pheatmap(
+      mat = base::t(mat),
+      color = grDevices::colorRampPalette(c("#0072B5FF", "white", "#BC3C29FF"))(50),
+      border_color = "white",
+      show_rownames = TRUE, show_colnames = TRUE,
+      cluster_rows = cluster_rows, cluster_cols = cluster_cols,
+      treeheight_row = 0, treeheight_col = 0,
+      angle_col = 90, fontsize = 11, scale = "none",
+      main = main, silent = TRUE
+    )$gtable
+  }
+
+  heatmap_spec <- eventReactive(input$hm_run, {
+    req(seurat_obj(), input$hm_cluster,
+        requireNamespace("pheatmap", quietly = TRUE))
+    ma <- build_hm_mat(seurat_obj())
+    validate(need(!is.null(ma) && nrow(ma) > 0, t("hm_no_genes")))
+    rb <- ref_obj()
+    list(active = ma,
+         ref = if (!is.null(rb)) build_hm_mat(rb) else NULL,
+         ref_present = !is.null(rb),
+         names = c(active_name(), ref_name() %||% ""),
          cluster_rows = isTRUE(input$hm_cluster_rows),
          cluster_cols = isTRUE(input$hm_cluster_cols))
   }, ignoreInit = TRUE)
 
   output$heatmap_plot <- renderPlot({
     spec <- heatmap_spec()
-    # 行=クラスター, 列=遺伝子 にして遺伝子名を垂直ラベル
-    pheatmap::pheatmap(
-      mat = base::t(spec$mat),
-      color = grDevices::colorRampPalette(c("#0072B5FF", "white", "#BC3C29FF"))(50),
-      border_color = "white",
-      show_rownames = TRUE,
-      show_colnames = TRUE,
-      cluster_rows = spec$cluster_rows,
-      cluster_cols = spec$cluster_cols,
-      treeheight_row = 0,
-      treeheight_col = 0,
-      angle_col = 90,
-      fontsize = 11,
-      scale = "none",
-      silent = FALSE
-    )
+    g_active <- hm_grob(spec$active, spec$names[1], spec$cluster_rows, spec$cluster_cols)
+    if (!spec$ref_present) {
+      grid::grid.newpage(); grid::grid.draw(g_active)
+    } else {
+      g_ref <- if (is.null(spec$ref)) {
+        grid::textGrob(t("ref_missing"), gp = grid::gpar(col = "grey50"))
+      } else {
+        hm_grob(spec$ref, spec$names[2], spec$cluster_rows, spec$cluster_cols)
+      }
+      gridExtra::grid.arrange(g_active, g_ref, ncol = 2)
+    }
   }, bg = "white")
 
   # ==========================================================================
@@ -1605,16 +1722,15 @@ server <- function(input, output, session) {
   })
 
   # 「描画」ボタンを押したときだけ計算
-  dotplot_obj <- eventReactive(input$dot_run, {
-    req(seurat_obj(), input$dot_cluster)
-    obj <- seurat_obj()
+  build_dot <- function(obj) {
     pt <- plot_theme()
+    if (!(input$dot_cluster %in% names(obj@meta.data))) return(empty_panel(t("ref_missing")))
 
     set_df <- resolve_marker_set_df("dot")
     genes_all <- unique(set_df$feature)
     validate(need(length(genes_all) > 0, t("hm_no_genes")))
     mat <- get_expr_matrix(obj, genes_all)     # genes x cells
-    validate(need(!is.null(mat) && nrow(mat) > 0, t("hm_no_genes")))
+    if (is.null(mat) || nrow(mat) == 0) return(empty_panel(t("ref_missing")))
 
     labels <- as.character(obj@meta.data[[input$dot_cluster]])
     keep <- !is.na(labels)
@@ -1623,7 +1739,7 @@ server <- function(input, output, session) {
     # 描画クラスターを選択・系統順に並べ、対象細胞だけに限定
     cl_levels <- selected_clusters("dot", obj, input$dot_cluster)
     cl_levels <- cl_levels[cl_levels %in% labels]
-    validate(need(length(cl_levels) > 0, t("hm_no_genes")))
+    if (length(cl_levels) == 0) return(empty_panel(t("ref_missing")))
     sel_idx <- labels %in% cl_levels
     mat <- mat[, sel_idx, drop = FALSE]
     labels <- labels[sel_idx]
@@ -1687,6 +1803,15 @@ server <- function(input, output, session) {
     }
 
     p
+  }
+
+  # 「描画」ボタンを押したときだけ計算（アクティブ + リファレンス）
+  dotplot_obj <- eventReactive(input$dot_run, {
+    req(seurat_obj(), input$dot_cluster)
+    rb <- ref_obj()
+    pa <- build_dot(seurat_obj())
+    pr <- if (!is.null(rb)) build_dot(rb) else NULL
+    combine_gg(pa, pr, active_name(), ref_name())
   }, ignoreInit = TRUE)
 
   output$dotplot_plot <- renderPlot({ dotplot_obj() }, bg = "transparent")

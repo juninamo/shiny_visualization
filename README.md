@@ -24,9 +24,18 @@ feature immediately.
 
 ### Highlights
 
+- **Multi-dataset comparison** — load several `.rds` files at once, pick an
+  **active** and a **reference** dataset, and every tab (Violin, Feature/Group
+  UMAP, Composition, Heatmap, Dot Plot) renders the two **side by side** with the
+  same gene and settings. Set the reference to *(none)* for a single view.
 - **Pre-registered marker sets** — curated panels (`Cell type`, `T cell`, `B cell`,
   `Myeloid`, `NK / ILC`, `Stromal / Tissue`, `All curated`) drive the Heatmap and
-  Dot Plot tabs out of the box.
+  Dot Plot tabs. On the Heatmap/Dot Plot/DEG tabs you can use a *set*, a
+  *set + your own genes*, or *only your own genes*.
+- **Run on demand** — Composition, Heatmap, and Dot Plot render only when you
+  click their **Plot** button (they don't recompute on every option change).
+- **Interactive volcano** — on the DEG tab, hover a point to see the gene and its
+  stats (via plotly; falls back to a static plot if plotly is absent).
 - **Dynamic lineage palette & ordering** — when cluster labels follow the
   `<number>_<Lineage>` convention (e.g. `0_B_Plasma`, `2_TNK_ILC`), the app
   automatically (a) assigns a light→dark color gradient within each lineage and
@@ -54,13 +63,15 @@ feature immediately.
 
 ```r
 install.packages(c("shiny", "bslib", "ggplot2", "DT", "ggrepel",
-                   "pheatmap", "ggh4x"))
+                   "pheatmap", "ggh4x", "plotly", "patchwork", "gridExtra"))
 # Seurat (and its dependency Matrix):
 install.packages("Seurat")
 ```
 
 `pheatmap` is required for the Heatmap tab; `ggh4x` enables nested facets in the
-Composition tab (it gracefully falls back to `facet_grid` if absent).
+Composition tab (falls back to `facet_grid` if absent); `plotly` powers the
+interactive volcano (falls back to a static plot); `patchwork`/`gridExtra` are
+used to lay out the side-by-side reference comparison.
 
 ---
 
@@ -121,3 +132,4 @@ For the full experience, the object should ideally contain:
 | `app.R` | The Shiny application. |
 | `make_test_data.R` | Script that generates `test_data.rds`. |
 | `test_data.rds` | Synthetic demo dataset. |
+| `test_data_reference.rds` | A subsampled variant of the demo data, for trying the reference comparison. |
