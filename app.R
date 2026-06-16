@@ -3537,18 +3537,21 @@ server <- function(input, output, session) {
   })
 
   output$spatial_plot_ui <- renderUI({
-    plotOutput("spatial_plot", height = act_h(), width = act_w())
+    if (requireNamespace("plotly", quietly = TRUE)) {
+      plotly::plotlyOutput("spatial_plotly", height = act_h(), width = act_w())
+    } else {
+      plotOutput("spatial_plot", height = act_h(), width = act_w())
+    }
   })
 
-  output$spatial_plot <- renderPlot({
+  # 描画用データの準備（点/ポリゴン・plotly/ggplot で共通）
+  spatial_prep <- reactive({
     obj <- spatial_obj(); req(obj, input$spatial_color)
     xy <- spatial_xy(); req(xy)
-    pt <- plot_theme()
     meta <- obj@meta.data
     df <- xy[xy$cell %in% rownames(meta), , drop = FALSE]
     df$col <- meta[df$cell, input$spatial_color]
     sc <- input$spatial_sample_col
-    # サンプルで絞り込み + facet
     facet <- FALSE
     if (!is.null(sc) && !identical(sc, "__none__") && sc %in% names(meta)) {
       df$sample <- as.character(meta[df$cell, sc])
@@ -3558,25 +3561,102 @@ server <- function(input, output, session) {
       facet <- length(unique(df$sample)) > 1
     }
     validate(need(nrow(df) > 0, t("spatial_none")))
-    keep_cells <- df$cell
-    # クラスター系の色分けは系統順 factor に
     is_cat <- is.factor(df$col) || is.character(df$col) ||
               (is.numeric(df$col) && length(unique(df$col)) <= 50)
-    if (is_cat) {
-      df$col <- factor(as.character(df$col), levels = cluster_level_order(df$col))
-    }
-
-    # セグメンテーション(細胞境界ポリゴン)があり、表示ONなら塗りつぶし描画
+    if (is_cat) df$col <- factor(as.character(df$col), levels = cluster_level_order(df$col))
     seg <- spatial_seg()
     use_seg <- isTRUE(input$spatial_use_seg) && !is.null(seg)
-    pt_sz <- input$spatial_pt %||% 0.8
+    sg <- if (use_seg) seg[seg$cell %in% df$cell, , drop = FALSE] else NULL
+    list(df = df, sg = sg, use_seg = use_seg, is_cat = is_cat, facet = facet)
+  })
 
-    p <- ggplot()
-    if (use_seg) {
-      sg <- seg[seg$cell %in% keep_cells, , drop = FALSE]
-      cmap <- setNames(df$col, df$cell)
-      sg$col <- cmap[sg$cell]
+  # --- インタラクティブ版（点/ポリゴンにホバーでラベル表示）---
+  if (requireNamespace("plotly", quietly = TRUE)) {
+    # 1サンプル分の plotly を構築
+    spatial_one_plotly <- function(d, sg, use_seg, is_cat, pt_sz, flip, colorvar,
+                                   disc_pal, showlegend) {
+      yf <- if (flip) function(v) -v else function(v) v
+      d$hover <- paste0(colorvar, ": ", as.character(d$col), "<br>cell: ", d$cell)
+      fig <- plotly::plot_ly()
+      if (use_seg && !is.null(sg) && nrow(sg) > 0 && is_cat) {
+        # カテゴリごとに1トレース（ポリゴンをNAで区切り fill='toself'）
+        for (lev in levels(droplevels(d$col))) {
+          cl_cells <- d$cell[d$col == lev]
+          s <- sg[sg$cell %in% cl_cells, , drop = FALSE]
+          if (!nrow(s)) next
+          xs <- unlist(lapply(split(s$x, factor(s$cell, unique(s$cell))), function(z) c(z, NA)))
+          ys <- unlist(lapply(split(s$y, factor(s$cell, unique(s$cell))), function(z) c(yf(z), NA)))
+          fig <- plotly::add_trace(fig, x = xs, y = ys, type = "scatter", mode = "lines",
+            fill = "toself", fillcolor = unname(disc_pal[lev]),
+            line = list(width = 0.4, color = "rgba(255,255,255,0.5)"),
+            name = lev, legendgroup = lev, showlegend = showlegend, hoverinfo = "skip")
+        }
+        # ホバー用の重心マーカー（小さく）
+        fig <- plotly::add_trace(fig, data = d, x = ~x, y = yf(d$y), type = "scattergl",
+          mode = "markers", marker = list(size = 3, color = "rgba(0,0,0,0)"),
+          text = ~hover, hoverinfo = "text", showlegend = FALSE)
+      } else if (is_cat) {
+        cols <- unname(disc_pal[as.character(d$col)])
+        fig <- plotly::add_trace(fig, data = d, x = ~x, y = yf(d$y), type = "scattergl",
+          mode = "markers", color = ~col, colors = disc_pal,
+          marker = list(size = pt_sz * 5), text = ~hover, hoverinfo = "text",
+          showlegend = showlegend)
+      } else {
+        fig <- plotly::add_trace(fig, data = d, x = ~x, y = yf(d$y), type = "scattergl",
+          mode = "markers",
+          marker = list(size = pt_sz * 5, color = ~col, colorscale = "Viridis",
+                        showscale = showlegend, colorbar = list(title = colorvar)),
+          text = ~hover, hoverinfo = "text", showlegend = FALSE)
+      }
+      plotly::layout(fig,
+        xaxis = list(title = "", zeroline = FALSE, showgrid = FALSE, showticklabels = FALSE),
+        yaxis = list(title = "", zeroline = FALSE, showgrid = FALSE, showticklabels = FALSE,
+                     scaleanchor = "x", scaleratio = 1))
+    }
+
+    output$spatial_plotly <- plotly::renderPlotly({
+      pr <- spatial_prep(); pt <- plot_theme()
+      df <- pr$df; pt_sz <- input$spatial_pt %||% 0.8
+      flip <- isTRUE(input$spatial_flip); colorvar <- input$spatial_color
+      disc_pal <- NULL
+      if (pr$is_cat) {
+        lin <- lineage_colors_or_null(df$col)
+        levs <- levels(df$col)
+        disc_pal <- if (!is.null(lin)) lin[levs] else
+          setNames(scales::hue_pal()(length(levs)), levs)
+      }
+      showleg <- !(pr$is_cat && nlevels(df$col) > 30)
+      samples <- if (pr$facet) sort(unique(df$sample)) else NA
+      build1 <- function(s, first) {
+        d <- if (is.na(s)) df else df[df$sample == s, , drop = FALSE]
+        sg <- if (!is.null(pr$sg)) pr$sg[pr$sg$cell %in% d$cell, , drop = FALSE] else NULL
+        f <- spatial_one_plotly(d, sg, pr$use_seg, pr$is_cat, pt_sz, flip, colorvar,
+                                disc_pal, showlegend = (first && showleg))
+        if (!is.na(s)) f <- plotly::layout(f, annotations = list(text = s, x = 0.5, y = 1.0,
+          xref = "paper", yref = "paper", showarrow = FALSE, font = list(color = pt$fg)))
+        f
+      }
+      fig <- if (pr$facet) {
+        figs <- lapply(seq_along(samples), function(i) build1(samples[i], i == 1))
+        plotly::subplot(figs, nrows = 1, margin = 0.02, titleX = FALSE, titleY = FALSE)
+      } else build1(NA, TRUE)
+      plotly::layout(fig, paper_bgcolor = pt$bg, plot_bgcolor = pt$bg,
+                     font = list(color = pt$fg), legend = list(font = list(color = pt$fg)))
+    })
+  }
+
+  output$spatial_plot <- renderPlot({
+    pr <- spatial_prep(); pt <- plot_theme()
+    df <- pr$df; sg <- pr$sg; use_seg <- pr$use_seg; is_cat <- pr$is_cat; facet <- pr$facet
+    pt_sz <- input$spatial_pt %||% 0.8
+    if (use_seg && !is.null(sg)) {
+      cmap <- setNames(df$col, df$cell); sg$col <- cmap[sg$cell]
       if (!is.null(df$sample)) sg$sample <- setNames(df$sample, df$cell)[sg$cell]
+    }
+
+    eff_seg <- use_seg && !is.null(sg)
+    p <- ggplot()
+    if (eff_seg) {
       p <- p +
         geom_polygon(data = sg, aes(x = x, y = y, group = cell, fill = col),
                      color = pt$bg, linewidth = 0.1) +
@@ -3614,9 +3694,9 @@ server <- function(input, output, session) {
       p
     }
     if (is_cat) {
-      p <- apply_disc(p, if (use_seg) "fill" else "color")
+      p <- apply_disc(p, if (eff_seg) "fill" else "color")
     } else {
-      p <- p + (if (use_seg) scale_fill_viridis_c() else scale_color_viridis_c())
+      p <- p + (if (eff_seg) scale_fill_viridis_c() else scale_color_viridis_c())
     }
     if (facet) p <- p + facet_wrap(~ sample)
     p

@@ -45,8 +45,8 @@ feature immediately.
 - **Interactive plots** — hover to inspect: a Group UMAP point shows its cluster;
   a DEG volcano point shows the gene and stats; a Composition bar segment shows
   the cluster, x value and proportion; a Dot Plot dot shows the gene, cluster,
-  percent expressed and scaled mean (via plotly; all fall back to static plots if
-  plotly is absent).
+  percent expressed and scaled mean; a Spatial cell shows its label (via plotly;
+  all fall back to static plots if plotly is absent).
 - **Dynamic lineage palette & ordering** — when cluster labels follow the
   `<number>_<Lineage>` convention (e.g. `0_B_Plasma`, `2_TNK_ILC`), the app
   automatically (a) assigns a light→dark color gradient within each lineage and
