@@ -2345,7 +2345,9 @@ server <- function(input, output, session) {
         ggnewscale::new_scale_fill() +
         geom_tile(data = ann, aes(x = gene, y = cluster, fill = src),
                   color = "white", linewidth = 0.3) +
-        scale_fill_manual(values = src_pal, name = "dataset", drop = FALSE)
+        scale_fill_manual(values = src_pal, name = "dataset", drop = FALSE) +
+        # x の並び順を明示（指定しないと2層目の "▮" が右端に回るため左端に固定）
+        scale_x_discrete(limits = gene_levels)
     }
 
     p +
@@ -2680,6 +2682,7 @@ server <- function(input, output, session) {
       geom_tile(data = ann, aes(x = feature, y = id, fill = src), width = 0.95, height = 0.95) +
       scale_fill_manual(values = src_pal, name = "dataset", drop = FALSE) +
       geom_point(data = dots, aes(x = feature, y = id, size = pct, color = avg)) +
+      scale_x_discrete(limits = gene_levels) +   # "▮" を左端に固定
       scale_radius(range = c(0, dot_scale), limits = c(0, 100)) +
       scale_color_gradient2(midpoint = 0, low = "#3C5488FF", mid = "grey90",
                             high = "#DC0000FF", space = "Lab") +
