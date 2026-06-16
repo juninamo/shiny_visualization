@@ -355,6 +355,7 @@ i18n <- list(
     hm_scale             = "Z-score (行スケーリング)",
     hm_cluster_rows      = "行をクラスタリング",
     hm_cluster_cols      = "列をクラスタリング",
+    hm_combine           = "リファレンスと統合 (似たクラスターが近くに並ぶ)",
     hm_no_genes          = "選択したマーカーがデータ内に見つかりません。",
     hm_pkg_missing       = "pheatmap パッケージが必要です: install.packages('pheatmap')",
     dot_scale            = "ドットサイズ",
@@ -490,6 +491,7 @@ i18n <- list(
     hm_scale             = "Z-score (row scaling)",
     hm_cluster_rows      = "Cluster rows",
     hm_cluster_cols      = "Cluster columns",
+    hm_combine           = "Combine with reference (similar clusters sit together)",
     hm_no_genes          = "None of the selected markers were found in the data.",
     hm_pkg_missing       = "The 'pheatmap' package is required: install.packages('pheatmap')",
     dot_scale            = "Dot size",
@@ -2105,6 +2107,11 @@ server <- function(input, output, session) {
           column(4, checkboxInput("hm_cluster_cols", t("hm_cluster_cols"),
                                   value = isolate(input$hm_cluster_cols) %||% TRUE))
         ),
+        # リファレンスがある時のみ: 1枚に統合してクラスター対応を見やすく
+        if (!is.null(ref_obj())) {
+          checkboxInput("hm_combine", t("hm_combine"),
+                        value = isolate(input$hm_combine) %||% FALSE)
+        },
         plot_run_btn("hm_run")
       )),
       uiOutput("heatmap_plot_ui")
@@ -2114,7 +2121,12 @@ server <- function(input, output, session) {
   output$heatmap_plot_ui <- renderUI({
     if (!data_loaded()) return(NULL)
     if ((input$hm_run %||% 0) == 0) return(run_hint_ui())
-    side_by_side_ui("heatmap_plot", "heatmap_plot_ref", !is.null(ref_obj()))
+    # 統合モードは1枚を全幅で表示、それ以外は左右に並べる
+    if (isTRUE(input$hm_combine) && !is.null(ref_obj())) {
+      plotOutput("heatmap_plot", height = act_h(), width = act_w())
+    } else {
+      side_by_side_ui("heatmap_plot", "heatmap_plot_ref", !is.null(ref_obj()))
+    }
   })
 
   # 「描画」ボタンを押したときだけ計算（自動描画しない）
@@ -2181,30 +2193,74 @@ server <- function(input, output, session) {
       )
   }
 
+  # アクティブとリファレンスのクラスター平均を共通遺伝子で1枚に統合。
+  # 各データセット内で遺伝子ごとに Z-score 化（プラットフォーム差を吸収）してから結合。
+  combine_hm <- function(aa, ar, na, nr, scale_within) {
+    if (is.null(aa) || is.null(ar)) return(NULL)
+    common <- intersect(rownames(aa), rownames(ar))
+    if (length(common) < 2) return(NULL)
+    aa <- aa[common, , drop = FALSE]; ar <- ar[common, , drop = FALSE]
+    if (scale_within) {
+      sc <- function(m) {
+        if (ncol(m) >= 2) { z <- base::t(scale(base::t(m))); z[!is.finite(z)] <- 0; z } else m
+      }
+      aa <- sc(aa); ar <- sc(ar)
+    }
+    colnames(aa) <- paste0(na, " | ", colnames(aa))
+    colnames(ar) <- paste0(nr, " | ", colnames(ar))
+    mat <- cbind(aa, ar)
+    mat <- mat[stats::complete.cases(mat), , drop = FALSE]
+    if (scale_within) { mat[mat > 2] <- 2; mat[mat < -2] <- -2 }
+    mat
+  }
+
   heatmap_spec <- eventReactive(input$hm_run, {
     req(seurat_obj(), input$mk_cluster)
-    ma <- build_hm_mat(seurat_obj())
-    validate(need(!is.null(ma) && nrow(ma) > 0, t("hm_no_genes")))
     rb <- ref_obj()
-    list(active = ma,
-         ref = if (!is.null(rb)) {
-           build_hm_mat(rb, cluster_var = ref_tab_cluster("mk"),
-                        clusters_sel = input$mk_clusters_sel_ref)
-         } else NULL,
-         ref_present = !is.null(rb),
-         names = c(active_name(), ref_name() %||% ""),
-         cluster_rows = isTRUE(input$hm_cluster_rows),
-         cluster_cols = isTRUE(input$hm_cluster_cols))
+    combine <- isTRUE(input$hm_combine) && !is.null(rb)
+    if (combine) {
+      genes <- resolve_marker_genes("mk")
+      aa <- marker_avg_matrix(seurat_obj(), input$mk_cluster, genes,
+                              selected_clusters("mk", seurat_obj(), input$mk_cluster))
+      rcv <- ref_tab_cluster("mk")
+      ar <- if (!is.null(rcv)) {
+        marker_avg_matrix(rb, rcv, genes,
+                          selected_clusters_v(input$mk_clusters_sel_ref, rb, rcv))
+      } else NULL
+      combined <- combine_hm(aa, ar, active_name(), ref_name() %||% "ref",
+                             isTRUE(input$hm_scale))
+      validate(need(!is.null(combined) && nrow(combined) > 0 && ncol(combined) >= 2,
+                    t("hm_no_genes")))
+      list(combine = TRUE, combined = combined,
+           cluster_cols = isTRUE(input$hm_cluster_cols))
+    } else {
+      ma <- build_hm_mat(seurat_obj())
+      validate(need(!is.null(ma) && nrow(ma) > 0, t("hm_no_genes")))
+      list(combine = FALSE, active = ma,
+           ref = if (!is.null(rb)) {
+             build_hm_mat(rb, cluster_var = ref_tab_cluster("mk"),
+                          clusters_sel = input$mk_clusters_sel_ref)
+           } else NULL,
+           ref_present = !is.null(rb),
+           names = c(active_name(), ref_name() %||% ""),
+           cluster_rows = isTRUE(input$hm_cluster_rows),
+           cluster_cols = isTRUE(input$hm_cluster_cols))
+    }
   }, ignoreInit = TRUE)
 
   output$heatmap_plot <- renderPlot({
     spec <- heatmap_spec()
-    build_hm_ggplot(spec$active, spec$names[1], spec$cluster_rows, spec$cluster_cols)
+    if (isTRUE(spec$combine)) {
+      # 統合モード: 行(クラスター)を必ず階層クラスタリングして似たもの同士を隣接
+      build_hm_ggplot(spec$combined, "", TRUE, spec$cluster_cols)
+    } else {
+      build_hm_ggplot(spec$active, spec$names[1], spec$cluster_rows, spec$cluster_cols)
+    }
   }, bg = "transparent")
 
   output$heatmap_plot_ref <- renderPlot({
     spec <- heatmap_spec()
-    req(spec$ref_present)
+    req(isFALSE(spec$combine), spec$ref_present)
     if (is.null(spec$ref)) {
       empty_panel(t("ref_missing"))
     } else {
