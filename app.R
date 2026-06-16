@@ -1147,7 +1147,7 @@ server <- function(input, output, session) {
     cur_facets <- isolate(input$comp_facets)
     facet_sel <- cur_facets[cur_facets %in% cat_cols]
     cur_scheme <- isolate(input$comp_color_scheme)
-    scheme_sel <- if (!is.null(cur_scheme)) cur_scheme else "lineage"
+    scheme_sel <- if (!is.null(cur_scheme)) cur_scheme else "manual"
 
     tagList(
       div(
@@ -1175,8 +1175,8 @@ server <- function(input, output, session) {
           fluidRow(
             column(12,
               radioButtons("comp_color_scheme", t("comp_color_scheme"),
-                           choices = c(setNames("lineage", t("comp_scheme_lineage")),
-                                       setNames("manual",  t("comp_scheme_manual"))),
+                           choices = c(setNames("manual",  t("comp_scheme_manual")),
+                                       setNames("lineage", t("comp_scheme_lineage"))),
                            selected = scheme_sel, inline = TRUE)
             )
           )
