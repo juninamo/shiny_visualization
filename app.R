@@ -2110,17 +2110,41 @@ server <- function(input, output, session) {
 
   # インタラクティブ版（ドットにホバーで発現割合などを表示）
   if (requireNamespace("plotly", quietly = TRUE)) {
+    # 指定 % に対応する plotly マーカーサイズ（同じ size スケールを再現して取得）
+    dot_size_px <- function(breaks, dot_scale) {
+      d <- data.frame(x = seq_along(breaks), y = 1, v = breaks)
+      g <- plotly::plotly_build(plotly::ggplotly(
+        ggplot(d, aes(x, y)) + geom_point(aes(size = v)) +
+          scale_radius(range = c(0, dot_scale), limits = c(0, 100))))
+      g$x$data[[1]]$marker$size
+    }
+    # ggplotly はサイズ凡例を落とすため、ダミーの凡例マーカーを追加する
+    dot_to_plotly <- function(p, dot_scale) {
+      gp <- plotly::plotly_build(plotly::ggplotly(p, tooltip = "text"))
+      breaks <- c(25, 50, 75, 100)
+      sizes <- tryCatch(dot_size_px(breaks, dot_scale), error = function(e) NULL)
+      if (!is.null(sizes)) {
+        for (i in seq_along(breaks)) {
+          gp$x$data[[length(gp$x$data) + 1]] <- list(
+            x = list(NA), y = list(NA), type = "scatter", mode = "markers",
+            marker = list(size = sizes[i], color = "grey50", line = list(width = 0)),
+            name = paste0(breaks[i], "%"), legendgroup = "sizeleg",
+            showlegend = TRUE, hoverinfo = "skip")
+        }
+      }
+      gp
+    }
     dot_plotly_active <- eventReactive(input$dot_run, {
       req(seurat_obj(), input$dot_cluster)
-      plotly::ggplotly(build_dot(seurat_obj(), interactive = TRUE), tooltip = "text")
+      dot_to_plotly(build_dot(seurat_obj(), interactive = TRUE), input$dot_scale)
     }, ignoreInit = TRUE)
     dot_plotly_refobj <- eventReactive(input$dot_run, {
       rb <- ref_obj()
       if (is.null(rb)) return(NULL)
-      plotly::ggplotly(
+      dot_to_plotly(
         build_dot(rb, cluster_var = ref_tab_cluster("dot"),
                   clusters_sel = input$dot_clusters_sel_ref, interactive = TRUE),
-        tooltip = "text")
+        input$dot_scale)
     }, ignoreInit = TRUE)
     output$dot_plotly     <- plotly::renderPlotly({ dot_plotly_active() })
     output$dot_plotly_ref <- plotly::renderPlotly({ req(dot_plotly_refobj()) })
