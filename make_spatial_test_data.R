@@ -7,7 +7,9 @@
 #
 # Writes `spatial_test_data.rds` with x/y coordinates in meta.data, a `sample`
 # column (2 tissue sections), plus cell_type / lineage labels — so you can pick a
-# color variable and a sample and plot the spatial layout.
+# color variable and a sample and plot the spatial layout. It also includes
+# **segmentation** (per-cell boundary polygons) in @images, so the Spatial tab's
+# "Show segmentation" option can draw filled cell shapes.
 # =============================================================================
 
 suppressPackageStartupMessages({
@@ -77,7 +79,31 @@ obj$seurat_clusters <- factor(sub("_.*$", "", meta_df$cluster), levels = as.char
 # continuous variable to demo numeric coloring
 obj$density_score <- as.numeric(scale(meta_df$x + meta_df$y) + rnorm(n_cells, sd = 0.3))
 
+# --- Segmentation: one irregular polygon (cell boundary) per cell -------------
+# Build a FOV with both centroids and segmentation, one image per section.
+make_polygon <- function(cx, cy, r, k = 8) {
+  ang <- sort(runif(k, 0, 2 * pi))
+  rad <- r * runif(k, 0.7, 1.1)        # irregular radius -> cell-like shape
+  data.frame(x = cx + rad * cos(ang), y = cy + rad * sin(ang))
+}
+for (sec in c("sectionA", "sectionB")) {
+  idx <- which(meta_df$sample == sec)
+  cids <- rownames(meta_df)[idx]
+  cent <- data.frame(x = meta_df$x[idx], y = meta_df$y[idx], cell = cids)
+  poly <- do.call(rbind, lapply(seq_along(idx), function(j) {
+    pg <- make_polygon(meta_df$x[idx[j]], meta_df$y[idx[j]], r = 2.2)
+    pg$cell <- cids[j]; pg
+  }))
+  fov <- CreateFOV(
+    coords = list(segmentation = CreateSegmentation(poly),
+                  centroids    = CreateCentroids(cent)),
+    type = c("segmentation", "centroids"), assay = "RNA")
+  obj[[sec]] <- subset(fov, cells = cids)
+}
+
 saveRDS(obj, "spatial_test_data.rds")
 cat(sprintf("Saved spatial_test_data.rds : %d cells x %d genes\n", ncol(obj), nrow(obj)))
 cat("samples:\n"); print(table(obj$sample))
+cat("images:", paste(names(obj@images), collapse = ", "), "\n")
+cat("boundaries[1]:", paste(SeuratObject::Boundaries(obj@images[[1]]), collapse = ", "), "\n")
 cat("x range:", round(range(meta_df$x), 1), " y range:", round(range(meta_df$y), 1), "\n")

@@ -293,6 +293,23 @@ spatial_coords <- function(obj) {
   NULL
 }
 
+# @images にセグメンテーション(細胞境界ポリゴン)があれば取り出す。
+# 戻り値: data.frame(cell, x, y) の頂点列（細胞ごとに複数行）。無ければ NULL。
+spatial_segmentation <- function(obj) {
+  if (length(obj@images) == 0) return(NULL)
+  segs <- tryCatch(do.call(rbind, lapply(names(obj@images), function(im) {
+    img <- obj@images[[im]]
+    bnames <- tryCatch(SeuratObject::Boundaries(img), error = function(e) character(0))
+    if (!("segmentation" %in% bnames)) return(NULL)
+    tc <- SeuratObject::GetTissueCoordinates(img, which = "segmentation")
+    if (is.null(tc) || !all(c("x", "y") %in% names(tc))) return(NULL)
+    if (!("cell" %in% names(tc))) tc$cell <- rownames(tc)
+    data.frame(cell = as.character(tc$cell), x = tc$x, y = tc$y, stringsAsFactors = FALSE)
+  })), error = function(e) NULL)
+  if (is.null(segs) || nrow(segs) == 0) return(NULL)
+  segs
+}
+
 # =============================================================================
 # 翻訳辞書
 # =============================================================================
@@ -459,6 +476,7 @@ i18n <- list(
     spatial_flip      = "Y軸を反転",
     spatial_none      = "このオブジェクトに位置座標(x/y)が見つかりません。",
     spatial_ds        = "空間データ",
+    spatial_seg       = "セグメンテーション(細胞境界)を表示",
 
     # プレースホルダ
     placeholder_load  = "\U0001F4C2 RDSファイルを選択して「読み込む」ボタンを押してください",
@@ -629,6 +647,7 @@ i18n <- list(
     spatial_flip      = "Flip Y axis",
     spatial_none      = "No spatial coordinates (x/y) found in this object.",
     spatial_ds        = "Spatial dataset",
+    spatial_seg       = "Show segmentation (cell boundaries)",
 
     # Placeholders
     placeholder_load  = "\U0001F4C2 Select an RDS file and click 'Load'",
@@ -3445,6 +3464,11 @@ server <- function(input, output, session) {
     obj <- spatial_obj(); req(obj)
     spatial_coords(obj)
   })
+  # 選択データのセグメンテーション（あれば）
+  spatial_seg <- reactive({
+    obj <- spatial_obj(); req(obj)
+    spatial_segmentation(obj)
+  })
 
   output$spatial_panel_ui <- renderUI({
     lang <- input$lang
@@ -3489,7 +3513,12 @@ server <- function(input, output, session) {
           column(6, div(style = "margin-top: 30px;",
             checkboxInput("spatial_flip", t("spatial_flip"),
                           value = isolate(input$spatial_flip) %||% TRUE)))
-        )
+        ),
+        # セグメンテーションがあれば表示切替（デフォルトON）
+        if (!is.null(spatial_seg())) {
+          checkboxInput("spatial_use_seg", t("spatial_seg"),
+                        value = isolate(input$spatial_use_seg) %||% TRUE)
+        }
       )),
       uiOutput("spatial_plot_ui")
     )
@@ -3529,16 +3558,36 @@ server <- function(input, output, session) {
       facet <- length(unique(df$sample)) > 1
     }
     validate(need(nrow(df) > 0, t("spatial_none")))
+    keep_cells <- df$cell
     # クラスター系の色分けは系統順 factor に
     is_cat <- is.factor(df$col) || is.character(df$col) ||
               (is.numeric(df$col) && length(unique(df$col)) <= 50)
     if (is_cat) {
       df$col <- factor(as.character(df$col), levels = cluster_level_order(df$col))
     }
-    p <- ggplot(df, aes(x = x, y = y, color = col)) +
-      geom_point(size = input$spatial_pt %||% 0.8, shape = 16) +
-      coord_fixed() +
-      labs(x = NULL, y = NULL, color = input$spatial_color) +
+
+    # セグメンテーション(細胞境界ポリゴン)があり、表示ONなら塗りつぶし描画
+    seg <- spatial_seg()
+    use_seg <- isTRUE(input$spatial_use_seg) && !is.null(seg)
+    pt_sz <- input$spatial_pt %||% 0.8
+
+    p <- ggplot()
+    if (use_seg) {
+      sg <- seg[seg$cell %in% keep_cells, , drop = FALSE]
+      cmap <- setNames(df$col, df$cell)
+      sg$col <- cmap[sg$cell]
+      if (!is.null(df$sample)) sg$sample <- setNames(df$sample, df$cell)[sg$cell]
+      p <- p +
+        geom_polygon(data = sg, aes(x = x, y = y, group = cell, fill = col),
+                     color = pt$bg, linewidth = 0.1) +
+        labs(fill = input$spatial_color)
+    } else {
+      p <- p +
+        geom_point(data = df, aes(x = x, y = y, color = col),
+                   size = pt_sz, shape = 16) +
+        labs(color = input$spatial_color)
+    }
+    p <- p + coord_fixed() + labs(x = NULL, y = NULL) +
       theme_minimal(base_size = 12) +
       theme(
         panel.grid = element_blank(),
@@ -3551,14 +3600,23 @@ server <- function(input, output, session) {
         strip.text = element_text(color = pt$fg)
       )
     if (isTRUE(input$spatial_flip)) p <- p + scale_y_reverse()
-    if (is_cat) {
+
+    # 配色（塗り=fill / 点=color を共通の関数で適用）
+    apply_disc <- function(p, aes_fn_name) {
       lin <- lineage_colors_or_null(df$col)
-      if (!is.null(lin)) p <- p + scale_color_manual(values = lin)
-      n_lev <- nlevels(df$col)
-      if (n_lev > 30) p <- p + theme(legend.position = "none")
-      p <- p + guides(color = guide_legend(override.aes = list(size = 3)))
+      if (!is.null(lin)) {
+        p <- p + (if (aes_fn_name == "fill") scale_fill_manual(values = lin)
+                  else scale_color_manual(values = lin))
+      }
+      if (nlevels(df$col) > 30) p <- p + theme(legend.position = "none")
+      else if (aes_fn_name == "color")
+        p <- p + guides(color = guide_legend(override.aes = list(size = 3)))
+      p
+    }
+    if (is_cat) {
+      p <- apply_disc(p, if (use_seg) "fill" else "color")
     } else {
-      p <- p + scale_color_viridis_c()
+      p <- p + (if (use_seg) scale_fill_viridis_c() else scale_color_viridis_c())
     }
     if (facet) p <- p + facet_wrap(~ sample)
     p
