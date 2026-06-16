@@ -1389,13 +1389,28 @@ server <- function(input, output, session) {
       as.character(obj@meta.data[[group_var]]),
       levels = cluster_level_order(obj@meta.data[[group_var]])
     )
-    # repel=TRUE でラベルの重なりを回避、label.size でサイズ調整
     p <- DimPlot(obj, reduction = reduction, group.by = group_var,
-                 label = TRUE, label.size = label_size, repel = TRUE,
-                 pt.size = pt_size) + pt$theme_legend +
+                 label = FALSE, pt.size = pt_size) + pt$theme_legend +
       theme(legend.position = "bottom")
     lin_cols <- lineage_colors_or_null(obj@meta.data[[group_var]])
     if (!is.null(lin_cols)) p <- p + scale_color_manual(values = lin_cols)
+    # ラベルは自前で repel 描画（max.overlaps=Inf で全ラベル表示・重なり回避）。
+    # Seurat の repel=TRUE はクラスター数が多いと構造化エラーを出すため使わない。
+    emb <- tryCatch(Embeddings(obj, reduction = reduction)[, 1:2, drop = FALSE],
+                    error = function(e) NULL)
+    if (!is.null(emb)) {
+      lab_df <- data.frame(Ux = emb[, 1], Uy = emb[, 2],
+                           Cl = as.character(obj@meta.data[[group_var]]),
+                           stringsAsFactors = FALSE)
+      lab_df <- lab_df[!is.na(lab_df$Cl), , drop = FALSE]
+      if (nrow(lab_df) > 0) {
+        cent <- aggregate(cbind(Ux, Uy) ~ Cl, data = lab_df, FUN = median)
+        p <- p + ggrepel::geom_text_repel(
+          data = cent, aes(x = Ux, y = Uy, label = Cl),
+          size = label_size, max.overlaps = Inf, inherit.aes = FALSE,
+          color = pt$fg, bg.color = pt$bg, bg.r = 0.12, seed = 1)
+      }
+    }
     p
   }
 
