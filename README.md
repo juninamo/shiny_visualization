@@ -19,8 +19,7 @@ feature immediately.
 | 🏷️ **Group UMAP** | UMAP colored by any categorical metadata column. |
 | 📊 **DEG** | Differential expression (`FindMarkers`) with a Volcano plot and a searchable table. Supports **categorical** comparisons (Group 1 vs one **or multiple** control groups, or "all others") and **numeric** comparisons (Top X% vs Bottom X% of a continuous score). The tested **genes** can be restricted to *all genes*, a *marker set*, a *set + your own genes*, or *only your own genes*. |
 | 🧱 **Composition** | Stacked proportion bar plot (e.g. cluster composition per donor), with optional **nested faceting** by additional variables (e.g. `site` + `study`). |
-| 🔥 **Heatmap** | Mean-expression heatmap of a pre-registered marker-gene set, with optional per-gene Z-scoring and row/column clustering. |
-| 🔵 **Dot Plot** | Dot plot of a marker set: dot size = % expressing, color = scaled mean expression, optionally faceted by marker group. |
+| 🔥 **Heatmap / Dot** | One tab with shared gene/cluster controls and two inner sub-tabs: a **Heatmap** (mean-expression, optional per-gene Z-scoring and row/column clustering) and a **Dot Plot** (dot size = % expressing, color = scaled mean, optional marker-group facets). |
 
 ### Highlights
 
@@ -34,15 +33,16 @@ feature immediately.
   `Myeloid`, `NK / ILC`, `Stromal / Tissue`, `All curated`) drive the Heatmap and
   Dot Plot tabs. On the Heatmap/Dot Plot/DEG tabs you can use a *set*, a
   *set + your own genes*, or *only your own genes*, and prune individual genes
-  out of a set. The **Heatmap and Dot Plot share one set of gene/cluster
-  controls** (shown in the sidebar on those tabs), so you configure them once and
-  both plots match.
+  out of a set. The **Heatmap and Dot Plot live under one "Heatmap / Dot" tab and
+  share one set of gene/cluster controls** (at the top of that tab, with inner
+  sub-tabs for each plot), so you configure them once and both plots match.
 - **Run on demand** — Composition, Heatmap, and Dot Plot render only when you
   click their **Plot** button (they don't recompute on every option change).
-- **Interactive plots** — hover to inspect: a DEG volcano point shows the gene
-  and stats; a Composition bar segment shows the cluster, x value and proportion;
-  a Dot Plot dot shows the gene, cluster, percent expressed and scaled mean (via
-  plotly; all fall back to static plots if plotly is absent).
+- **Interactive plots** — hover to inspect: a Group UMAP point shows its cluster;
+  a DEG volcano point shows the gene and stats; a Composition bar segment shows
+  the cluster, x value and proportion; a Dot Plot dot shows the gene, cluster,
+  percent expressed and scaled mean (via plotly; all fall back to static plots if
+  plotly is absent).
 - **Dynamic lineage palette & ordering** — when cluster labels follow the
   `<number>_<Lineage>` convention (e.g. `0_B_Plasma`, `2_TNK_ILC`), the app
   automatically (a) assigns a light→dark color gradient within each lineage and

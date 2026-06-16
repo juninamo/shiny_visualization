@@ -570,21 +570,14 @@ ui <- page_sidebar(
       )
     ),
 
+    # Heatmap と Dot Plot を1つの大タブにまとめ、遺伝子・クラスター選択を
+    # 共有しつつ、内部の独立タブで切り替える
     nav_panel(
-      title = "\U0001F525 Heatmap",
-      value = "heatmap",
+      title = "\U0001F525 Heatmap / Dot",
+      value = "markers",
       card_body(
         class = "p-2",
-        uiOutput("heatmap_panel_ui")
-      )
-    ),
-
-    nav_panel(
-      title = "\U0001F535 Dot Plot",
-      value = "dotplot",
-      card_body(
-        class = "p-2",
-        uiOutput("dotplot_panel_ui")
+        uiOutput("marker_panel_ui")
       )
     )
   )
@@ -747,14 +740,7 @@ server <- function(input, output, session) {
       sliderInput("plot_width", t("plot_width"), min = 400, max = 4000, value = 800, step = 50),
 
       # リファレンス用のプロット設定（比較時のみ表示）
-      uiOutput("ref_plot_settings_ui"),
-
-      # Heatmap / Dot plot 共通のマーカー・クラスター設定（両タブで共有）
-      conditionalPanel(
-        "input.main_tabs == 'heatmap' || input.main_tabs == 'dotplot'",
-        hr(),
-        uiOutput("marker_shared_ui")
-      )
+      uiOutput("ref_plot_settings_ui")
     )
   })
 
@@ -1394,7 +1380,13 @@ server <- function(input, output, session) {
   output$group_umap_ui <- renderUI({
     if (!data_loaded()) return(placeholder_ui())
     if (!has_umap()) return(no_umap_ui())
-    side_by_side_ui("group_umap_plot", "group_umap_plot_ref", !is.null(ref_obj()))
+    # plotly があればインタラクティブ（点にホバーでクラスター名を表示）
+    if (requireNamespace("plotly", quietly = TRUE)) {
+      side_by_side_ui("group_umap_plotly", "group_umap_plotly_ref",
+                      !is.null(ref_obj()), plotly = TRUE)
+    } else {
+      side_by_side_ui("group_umap_plot", "group_umap_plot_ref", !is.null(ref_obj()))
+    }
   })
 
   build_group_umap <- function(obj, group_var, reduction, pt_size, label_size = 4) {
@@ -1445,6 +1437,67 @@ server <- function(input, output, session) {
     build_group_umap(ref_obj(), ref_group_var(), find_umap_reduction(ref_obj()), ref_pt(),
                      input$umap_label_size %||% 4)
   }, bg = "transparent")
+
+  # --- インタラクティブ版（点にホバーでクラスター名を表示） ---
+  # ggplotly は10万点規模で非常に遅いため、plotly(scattergl)で直接描く。
+  if (requireNamespace("plotly", quietly = TRUE)) {
+    plotly_msg <- function(msg) {
+      plotly::layout(plotly::plotly_empty(type = "scatter", mode = "markers"),
+        annotations = list(text = msg, showarrow = FALSE,
+                           font = list(size = 16, color = "grey50")))
+    }
+    build_group_umap_plotly <- function(obj, group_var, reduction, pt_size) {
+      pt <- plot_theme()
+      if (is.null(reduction)) return(plotly_msg(t("no_umap_title")))
+      if (is.null(group_var) || !(group_var %in% names(obj@meta.data))) {
+        return(plotly_msg(t("ref_missing")))
+      }
+      emb <- tryCatch(Embeddings(obj, reduction = reduction)[, 1:2, drop = FALSE],
+                      error = function(e) NULL)
+      if (is.null(emb)) return(plotly_msg(t("no_umap_title")))
+      levs <- cluster_level_order(obj@meta.data[[group_var]])
+      df <- data.frame(X = emb[, 1], Y = emb[, 2],
+                       Cl = factor(as.character(obj@meta.data[[group_var]]), levels = levs))
+      df <- df[!is.na(df$Cl), , drop = FALSE]
+      n_lev <- nlevels(droplevels(df$Cl))
+      axn <- colnames(emb)
+      lin_cols <- lineage_colors_or_null(obj@meta.data[[group_var]])
+      pal <- if (!is.null(lin_cols)) unname(lin_cols[levs]) else scales::hue_pal()(length(levs))
+      msize <- max(2, (pt_size %||% 0.3) * 6)
+      add_layout <- function(p, showleg) {
+        plotly::layout(p,
+          xaxis = list(title = axn[1]), yaxis = list(title = axn[2]),
+          paper_bgcolor = pt$bg, plot_bgcolor = pt$bg,
+          font = list(color = pt$fg), showlegend = showleg,
+          legend = list(font = list(color = pt$fg)))
+      }
+      if (n_lev <= 30) {
+        # クラスターごとにトレース（凡例あり）
+        p <- plotly::plot_ly(df, x = ~X, y = ~Y, color = ~Cl, colors = pal,
+                             type = "scattergl", mode = "markers",
+                             marker = list(size = msize, opacity = 0.85),
+                             text = ~Cl, hoverinfo = "text")
+        add_layout(p, TRUE)
+      } else {
+        # 多クラスターは単一トレース（高速・凡例なし、ホバーで識別）
+        cmap <- setNames(pal, levs)
+        df$.col <- cmap[as.character(df$Cl)]
+        p <- plotly::plot_ly(df, x = ~X, y = ~Y, type = "scattergl", mode = "markers",
+                             marker = list(color = ~I(.col), size = msize, opacity = 0.85),
+                             text = ~Cl, hoverinfo = "text")
+        add_layout(p, FALSE)
+      }
+    }
+    output$group_umap_plotly <- plotly::renderPlotly({
+      req(seurat_obj(), input$group_var, has_umap())
+      build_group_umap_plotly(seurat_obj(), input$group_var, umap_reduction(), act_pt())
+    })
+    output$group_umap_plotly_ref <- plotly::renderPlotly({
+      req(ref_obj(), has_umap())
+      build_group_umap_plotly(ref_obj(), ref_group_var(),
+                              find_umap_reduction(ref_obj()), ref_pt())
+    })
+  }
 
   # ==========================================================================
   # Composition (組成プロット)
@@ -2002,14 +2055,29 @@ server <- function(input, output, session) {
   # ==========================================================================
   # Heatmap
   # ==========================================================================
-  # Heatmap / Dot 共通のマーカー・クラスター設定（サイドバーに1か所だけ描画）。
-  # これにより遺伝子・クラスターの選択が両タブで共有される。
-  output$marker_shared_ui <- renderUI({
+  # Heatmap / Dot を1つの大タブにまとめる。上部に共通のマーカー・クラスター
+  # 設定（遺伝子・クラスター選択を両者で共有）、その下に Heatmap / Dot の内部タブ。
+  output$marker_panel_ui <- renderUI({
     lang <- input$lang
-    if (!data_loaded()) return(NULL)
+    if (!data_loaded()) return(placeholder_ui())
     col_types <- meta_col_types()
-    if (length(col_types$cat) == 0) return(NULL)
-    marker_settings_card("mk", NULL, feature_mode = TRUE)
+    if (length(col_types$cat) == 0) {
+      return(div(class = "text-center text-muted py-4", h5(t("comp_no_cat"))))
+    }
+    tagList(
+      marker_settings_card("mk", NULL, feature_mode = TRUE),
+      navset_card_tab(
+        id = "marker_subtab",
+        nav_panel(
+          title = "\U0001F525 Heatmap", value = "heatmap",
+          card_body(class = "p-2", uiOutput("heatmap_panel_ui"))
+        ),
+        nav_panel(
+          title = "\U0001F535 Dot Plot", value = "dotplot",
+          card_body(class = "p-2", uiOutput("dotplot_panel_ui"))
+        )
+      )
+    )
   })
 
   output$heatmap_panel_ui <- renderUI({
