@@ -367,6 +367,19 @@ i18n <- list(
     corr_proposed        = "提案クラスター名",
     corr_conf            = "確信度",
     corr_help            = "各アクティブクラスターの平均発現プロファイル（共通遺伝子をデータセット内でZ-score化）を、各リファレンスクラスターとピアソン相関で比較し、相関が最も高いものを「最も近いリファレンス」としています。マージン = 1位の相関 − 2位の相関（大きいほど対応が明確）。提案クラスター名 = 最も近いリファレンス名（1位と2位が僅差(マージン<0.05)の場合は両方を併記し「?」付き）。確信度は相関の高さとマージンから high/medium/low。",
+    subc_settings        = "サブクラスタリング設定",
+    subc_init            = "現在のアクティブクラスターから初期化 / リセット",
+    subc_target          = "細分化するクラスター (複数選択可)",
+    subc_k               = "サブクラスター数 (k)",
+    subc_run             = "細分化を実行",
+    subc_need_init       = "先に「初期化」ボタンを押してください。",
+    subc_no_ref          = "比較するリファレンスを選択してください。",
+    subc_running         = "サブクラスタリング中...",
+    subc_done            = "✅ 細分化完了: %d 個のサブクラスター",
+    subc_placeholder     = "クラスターを選び「細分化を実行」を押してください（相関の低い/曖昧なクラスターを選ぶと有効です）",
+    subc_leaf            = "現在の葉クラスター数: %d",
+    subc_dl_anno         = "全クラスター注釈(細胞→名前)をCSVで保存",
+    subc_help            = "選んだ各クラスターの細胞だけで、発現量の高い遺伝子を使ってサブクラスタリング（kmeans, k個）し、元のクラスター名の入れ子（例 5-TNK_ILC.0, 5-TNK_ILC.1）として命名します。生成したサブクラスターだけを同じリファレンスの遺伝子・クラスターと統合して Heatmap / Dot plot と相関解析を再描画します。さらに細分化したいクラスターを選んで何度でも繰り返せます。",
     hm_no_genes          = "選択したマーカーがデータ内に見つかりません。",
     hm_pkg_missing       = "pheatmap パッケージが必要です: install.packages('pheatmap')",
     dot_scale            = "ドットサイズ",
@@ -514,6 +527,19 @@ i18n <- list(
     corr_proposed        = "Proposed cluster name",
     corr_conf            = "Confidence",
     corr_help            = "Each active cluster's mean-expression profile (over shared genes, z-scored within its dataset) is compared to every reference cluster by Pearson correlation; the highest correlation is the 'nearest reference'. Margin = 1st − 2nd correlation (larger = more confident). Proposed cluster name = the nearest reference label (if 1st and 2nd are within margin <0.05, both are shown with a '?'). Confidence (high/medium/low) is from the correlation strength and margin.",
+    subc_settings        = "Sub-clustering settings",
+    subc_init            = "Initialize / reset from current active clusters",
+    subc_target          = "Clusters to sub-cluster (multi-select)",
+    subc_k               = "Number of sub-clusters (k)",
+    subc_run             = "Run sub-clustering",
+    subc_need_init       = "Click Initialize first.",
+    subc_no_ref          = "Select a reference dataset to compare.",
+    subc_running         = "Sub-clustering...",
+    subc_done            = "✅ Done: %d sub-clusters",
+    subc_placeholder     = "Select clusters and click Run sub-clustering (pick the low-correlation / ambiguous ones)",
+    subc_leaf            = "current leaf clusters: %d",
+    subc_dl_anno         = "Download full annotation (cell→label) CSV",
+    subc_help            = "Re-clusters the cells of each selected cluster (kmeans into k, on the most variable genes) and names them nested under the original (e.g. 5-TNK_ILC.0, 5-TNK_ILC.1). The new sub-clusters are then combined with the same reference genes/clusters and re-plotted as Heatmap / Dot plot with the correlation analysis. Pick clusters and repeat as many times as you like.",
     hm_no_genes          = "None of the selected markers were found in the data.",
     hm_pkg_missing       = "The 'pheatmap' package is required: install.packages('pheatmap')",
     dot_scale            = "Dot size",
@@ -2106,6 +2132,10 @@ server <- function(input, output, session) {
         nav_panel(
           title = "\U0001F535 Dot Plot", value = "dotplot",
           card_body(class = "p-2", uiOutput("dotplot_panel_ui"))
+        ),
+        nav_panel(
+          title = "\U0001FAB5 Sub-cluster", value = "subcluster",
+          card_body(class = "p-2", uiOutput("subc_panel_ui"))
         )
       )
     )
@@ -2505,6 +2535,82 @@ server <- function(input, output, session) {
     list(avg = avg, pct = pct)
   }
 
+  # --- A(avg,pct) と R(avg,pct) から 統合ドット用データ + 対応表 を計算（共通） ---
+  combine_dot_corr <- function(A, R, na, nr) {
+    if (is.null(A) || is.null(R)) return(NULL)
+    shared <- intersect(rownames(A$avg), rownames(R$avg))
+    if (length(shared) < 2) return(NULL)
+    zsc <- function(m) { z <- base::t(scale(base::t(m))); z[!is.finite(z)] <- 0; z }
+    zA <- zsc(A$avg[shared, , drop = FALSE]); zR <- zsc(R$avg[shared, , drop = FALSE])
+    cmat <- suppressWarnings(stats::cor(zA, zR)); cmat[!is.finite(cmat)] <- 0
+    corr <- do.call(rbind, lapply(rownames(cmat), function(ac) {
+      v <- cmat[ac, ]; ord <- order(v, decreasing = TRUE)
+      best_name <- colnames(cmat)[ord[1]]; c1 <- v[ord[1]]
+      c2 <- if (length(ord) >= 2) v[ord[2]] else NA
+      sec <- if (length(ord) >= 2) colnames(cmat)[ord[2]] else NA
+      mg  <- if (!is.na(c2)) c1 - c2 else NA
+      conf <- if (c1 >= 0.5 && (is.na(mg) || mg >= 0.05)) "high"
+              else if (c1 >= 0.3) "medium" else "low"
+      proposed <- if (!is.na(mg) && mg < 0.05 && !is.na(sec)) paste0(best_name, " / ", sec, " ?") else best_name
+      data.frame(active = ac, proposed_name = proposed, confidence = conf,
+                 best = best_name, cor = round(c1, 3), second = sec,
+                 cor2 = if (!is.na(c2)) round(c2, 3) else NA,
+                 margin = if (!is.na(mg)) round(mg, 3) else NA, stringsAsFactors = FALSE)
+    }))
+    corr <- corr[order(-corr$cor), ]
+    ids <- c(paste0(na, " | ", colnames(zA)), paste0(nr, " | ", colnames(zR)))
+    src <- c(rep(na, ncol(zA)), rep(nr, ncol(zR)))
+    avg_comb <- cbind(zA, zR); pct_comb <- cbind(A$pct[shared, , drop = FALSE], R$pct[shared, , drop = FALSE])
+    colnames(avg_comb) <- ids; colnames(pct_comb) <- ids
+    gene_ord <- shared[stats::hclust(stats::dist(avg_comb))$order]
+    clu_ord  <- ids[stats::hclust(stats::dist(base::t(avg_comb)))$order]
+    long <- data.frame(
+      feature = factor(rep(shared, times = ncol(avg_comb)), levels = gene_ord),
+      id      = factor(rep(ids, each = length(shared)), levels = clu_ord),
+      avg     = as.vector(avg_comb), pct = as.vector(pct_comb), stringsAsFactors = FALSE)
+    list(long = long, corr = corr, src = setNames(src, ids), clu_ord = clu_ord)
+  }
+
+  # 統合ドット(左端にデータセットアノテーション色)を ggplot で描く（共通）
+  combined_dot_ggplot <- function(cc, dot_scale) {
+    pt <- plot_theme()
+    ann_lab <- "▮"
+    gene_levels <- c(ann_lab, levels(cc$long$feature))
+    dots <- cc$long; dots$feature <- factor(as.character(dots$feature), levels = gene_levels)
+    ann <- data.frame(
+      feature = factor(ann_lab, levels = gene_levels),
+      id      = factor(names(cc$src), levels = cc$clu_ord),
+      src     = factor(unname(cc$src), levels = unique(unname(cc$src))), stringsAsFactors = FALSE)
+    src_pal <- setNames(c("#4C78A8", "#F58518", "#54A24B", "#E45756")[seq_along(levels(ann$src))],
+                        levels(ann$src))
+    ggplot() +
+      geom_tile(data = ann, aes(x = feature, y = id, fill = src), width = 0.95, height = 0.95) +
+      scale_fill_manual(values = src_pal, name = "dataset", drop = FALSE) +
+      geom_point(data = dots, aes(x = feature, y = id, size = pct, color = avg)) +
+      scale_radius(range = c(0, dot_scale), limits = c(0, 100)) +
+      scale_color_gradient2(midpoint = 0, low = "#3C5488FF", mid = "grey90",
+                            high = "#DC0000FF", space = "Lab") +
+      labs(x = NULL, y = NULL, size = t("dot_pct"), color = t("dot_avg")) +
+      theme_minimal(base_size = 11) +
+      theme(
+        axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5, size = 8),
+        axis.text.y = element_text(size = 8),
+        panel.grid = element_line(color = paste0(pt$fg2, "30")),
+        plot.background = element_rect(fill = pt$bg, color = NA),
+        panel.background = element_rect(fill = pt$bg, color = NA),
+        text = element_text(color = pt$fg), axis.text = element_text(color = pt$fg2),
+        legend.text = element_text(color = pt$fg), legend.title = element_text(color = pt$fg))
+  }
+
+  # 対応表 DT（共通）
+  corr_datatable <- function(corr) {
+    datatable(corr, rownames = FALSE, filter = "top",
+              options = list(pageLength = 15, scrollX = TRUE, dom = "Blfrtip"),
+              colnames = c(t("corr_active"), t("corr_proposed"), t("corr_conf"),
+                           t("corr_best"), t("corr_cor"),
+                           t("corr_second"), paste0(t("corr_cor"), "2"), t("corr_margin")))
+  }
+
   # 統合ドット + 対応表（描画ボタン押下時に計算）
   dot_combined <- eventReactive(input$dot_run, {
     req(seurat_obj(), input$mk_cluster)
@@ -2516,107 +2622,199 @@ server <- function(input, output, session) {
     R <- if (!is.null(rcv)) {
       dot_avg_pct(rb, rcv, selected_clusters_v(input$mk_clusters_sel_ref, rb, rcv), genes)
     } else NULL
-    if (is.null(A) || is.null(R)) return(NULL)
-    shared <- intersect(rownames(A$avg), rownames(R$avg))
-    if (length(shared) < 2) return(NULL)
-    zsc <- function(m) { z <- base::t(scale(base::t(m))); z[!is.finite(z)] <- 0; z }
-    zA <- zsc(A$avg[shared, , drop = FALSE]); zR <- zsc(R$avg[shared, , drop = FALSE])
-
-    # --- 対応表: active × ref の相関（発現パターンの近さ）---
-    cmat <- suppressWarnings(stats::cor(zA, zR))
-    cmat[!is.finite(cmat)] <- 0
-    corr <- do.call(rbind, lapply(rownames(cmat), function(ac) {
-      v <- cmat[ac, ]; ord <- order(v, decreasing = TRUE)
-      best_name <- colnames(cmat)[ord[1]]
-      c1 <- v[ord[1]]
-      c2 <- if (length(ord) >= 2) v[ord[2]] else NA
-      sec <- if (length(ord) >= 2) colnames(cmat)[ord[2]] else NA
-      mg  <- if (!is.na(c2)) c1 - c2 else NA
-      # 確信度: 相関の高さ + 1位/2位のマージン
-      conf <- if (c1 >= 0.5 && (is.na(mg) || mg >= 0.05)) "high"
-              else if (c1 >= 0.3) "medium" else "low"
-      # 提案名: 最も近いリファレンス名。1位と2位が僅差なら両方併記して曖昧さを明示。
-      proposed <- if (!is.na(mg) && mg < 0.05 && !is.na(sec)) {
-        paste0(best_name, " / ", sec, " ?")
-      } else best_name
-      data.frame(active = ac, proposed_name = proposed, confidence = conf,
-                 best = best_name, cor = round(c1, 3),
-                 second = sec, cor2 = if (!is.na(c2)) round(c2, 3) else NA,
-                 margin = if (!is.na(mg)) round(mg, 3) else NA,
-                 stringsAsFactors = FALSE)
-    }))
-    corr <- corr[order(-corr$cor), ]
-
-    # --- 統合ドット用ロングデータ（行=クラスター・列=遺伝子を階層クラスタリング）---
-    na <- active_name(); nr <- ref_name() %||% "ref"
-    ids <- c(paste0(na, " | ", colnames(zA)), paste0(nr, " | ", colnames(zR)))
-    src <- c(rep(na, ncol(zA)), rep(nr, ncol(zR)))
-    avg_comb <- cbind(zA, zR); pct_comb <- cbind(A$pct[shared, , drop = FALSE],
-                                                 R$pct[shared, , drop = FALSE])
-    colnames(avg_comb) <- ids; colnames(pct_comb) <- ids
-    gene_ord <- shared[stats::hclust(stats::dist(avg_comb))$order]
-    clu_ord  <- ids[stats::hclust(stats::dist(base::t(avg_comb)))$order]
-    long <- data.frame(
-      feature = factor(rep(shared, times = ncol(avg_comb)), levels = gene_ord),
-      id      = factor(rep(ids, each = length(shared)), levels = clu_ord),
-      avg     = as.vector(avg_comb), pct = as.vector(pct_comb),
-      stringsAsFactors = FALSE)
-    list(long = long, corr = corr, src = setNames(src, ids), clu_ord = clu_ord)
+    combine_dot_corr(A, R, active_name(), ref_name() %||% "ref")
   }, ignoreInit = TRUE)
 
   output$dot_combined_plot <- renderPlot({
     cc <- dot_combined(); req(cc)
-    pt <- plot_theme()
-    # 左端(クラスター文字列と図の間)にデータセット別アノテーション列を追加。
-    # ドットは color/size、アノテーションは fill を使うので別スケールで共存できる。
-    ann_lab <- "▮"
-    gene_levels <- c(ann_lab, levels(cc$long$feature))
-    dots <- cc$long
-    dots$feature <- factor(as.character(dots$feature), levels = gene_levels)
-    ann <- data.frame(
-      feature = factor(ann_lab, levels = gene_levels),
-      id      = factor(names(cc$src), levels = cc$clu_ord),
-      src     = factor(unname(cc$src), levels = unique(unname(cc$src))),
-      stringsAsFactors = FALSE)
-    src_pal <- setNames(c("#4C78A8", "#F58518", "#54A24B", "#E45756")[seq_along(levels(ann$src))],
-                        levels(ann$src))
-    ggplot() +
-      geom_tile(data = ann, aes(x = feature, y = id, fill = src),
-                width = 0.95, height = 0.95) +
-      scale_fill_manual(values = src_pal, name = "dataset", drop = FALSE) +
-      geom_point(data = dots, aes(x = feature, y = id, size = pct, color = avg)) +
-      scale_radius(range = c(0, input$dot_scale %||% 6), limits = c(0, 100)) +
-      scale_color_gradient2(midpoint = 0, low = "#3C5488FF", mid = "grey90",
-                            high = "#DC0000FF", space = "Lab") +
-      labs(x = NULL, y = NULL, size = t("dot_pct"), color = t("dot_avg")) +
-      theme_minimal(base_size = 11) +
-      theme(
-        axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5, size = 8),
-        axis.text.y = element_text(size = 8),
-        panel.grid = element_line(color = paste0(pt$fg2, "30")),
-        plot.background = element_rect(fill = pt$bg, color = NA),
-        panel.background = element_rect(fill = pt$bg, color = NA),
-        text = element_text(color = pt$fg),
-        axis.text = element_text(color = pt$fg2),
-        legend.text = element_text(color = pt$fg),
-        legend.title = element_text(color = pt$fg)
-      )
+    combined_dot_ggplot(cc, input$dot_scale %||% 6)
   }, bg = "transparent")
 
-  output$dot_corr_table <- renderDT({
-    cc <- dot_combined(); req(cc)
-    datatable(cc$corr, rownames = FALSE, filter = "top",
-              options = list(pageLength = 15, scrollX = TRUE, dom = "Blfrtip"),
-              colnames = c(t("corr_active"), t("corr_proposed"), t("corr_conf"),
-                           t("corr_best"), t("corr_cor"),
-                           t("corr_second"), paste0(t("corr_cor"), "2"), t("corr_margin")))
-  })
+  output$dot_corr_table <- renderDT({ cc <- dot_combined(); req(cc); corr_datatable(cc$corr) })
 
   output$dot_corr_dl <- downloadHandler(
     filename = function() "active_vs_reference_correspondence.csv",
     content = function(file) {
       cc <- dot_combined()
       if (!is.null(cc)) utils::write.csv(cc$corr, file, row.names = FALSE)
+    }
+  )
+
+  # ==========================================================================
+  # Sub-cluster（反復サブクラスタリング）
+  # ==========================================================================
+  work_labels  <- reactiveVal(NULL)   # 細胞名 -> 現在の作業ラベル
+  subc_parents <- reactiveVal(NULL)   # 直近に細分化して生成したサブクラスター名
+
+  # ラベルベースの平均発現/発現割合（作業ラベルから集計）
+  avg_pct_labels <- function(obj, labels_vec, clusters, genes) {
+    mat <- get_expr_matrix(obj, genes)
+    if (is.null(mat) || nrow(mat) == 0) return(NULL)
+    lab <- as.character(labels_vec[colnames(mat)])
+    keep <- !is.na(lab) & lab %in% clusters
+    mat <- mat[, keep, drop = FALSE]; lab <- lab[keep]
+    cls <- clusters[clusters %in% lab]
+    if (!length(cls)) return(NULL)
+    avg <- vapply(cls, function(cl) Matrix::rowMeans(mat[, lab == cl, drop = FALSE]), numeric(nrow(mat)))
+    pct <- vapply(cls, function(cl) Matrix::rowSums(mat[, lab == cl, drop = FALSE] > 0) /
+                                    sum(lab == cl) * 100, numeric(nrow(mat)))
+    dimnames(avg) <- list(rownames(mat), cls); dimnames(pct) <- list(rownames(mat), cls)
+    list(avg = avg, pct = pct)
+  }
+
+  # 指定細胞を k 個にサブクラスタリング（変動の大きい遺伝子 + kmeans）
+  quick_subcluster <- function(obj, cells, k) {
+    mat <- get_expr_matrix(obj, rownames(obj))
+    if (is.null(mat)) return(NULL)
+    cells <- intersect(cells, colnames(mat))
+    if (length(cells) <= k) return(NULL)
+    mat <- mat[, cells, drop = FALSE]
+    n <- ncol(mat); rmean <- Matrix::rowMeans(mat)
+    rv <- (Matrix::rowSums(mat^2) - n * rmean^2) / (n - 1)
+    rv[is.na(rv)] <- 0
+    topg <- names(sort(rv, decreasing = TRUE))[seq_len(min(1000, sum(rv > 0)))]
+    if (length(topg) < 2) return(NULL)
+    m <- as.matrix(mat[topg, , drop = FALSE])
+    m <- base::t(scale(base::t(m))); m[!is.finite(m)] <- 0
+    set.seed(1)
+    km <- stats::kmeans(base::t(m), centers = k, nstart = 5, iter.max = 50)
+    setNames(km$cluster, cells)
+  }
+
+  output$subc_panel_ui <- renderUI({
+    lang <- input$lang
+    if (!data_loaded()) return(placeholder_ui())
+    if (is.null(ref_obj())) {
+      return(div(class = "text-center text-warning py-4", h5(t("subc_no_ref"))))
+    }
+    leaf_n <- if (!is.null(work_labels())) length(unique(work_labels())) else 0
+    tagList(
+      div(class = "alert alert-secondary py-2 small mb-2", icon("circle-info"), " ", t("subc_help")),
+      div(class = "card mb-3", div(class = "card-body",
+        h6(t("subc_settings"), class = "card-title text-primary"),
+        actionButton("subc_init", t("subc_init"), class = "btn-outline-secondary btn-sm mb-2",
+                     icon = icon("rotate-left")),
+        if (leaf_n > 0) div(class = "small text-muted mb-2", sprintf(t("subc_leaf"), leaf_n)),
+        uiOutput("subc_target_ui"),
+        fluidRow(
+          column(6, numericInput("subc_k", t("subc_k"), value = isolate(input$subc_k) %||% 2,
+                                 min = 2, max = 12, step = 1)),
+          column(6, div(style = "margin-top: 24px;",
+            actionButton("subc_run", t("subc_run"), class = "btn-primary w-100",
+                         icon = icon("sitemap"))))
+        ),
+        downloadButton("subc_anno_dl", t("subc_dl_anno"), class = "btn-outline-success btn-sm mt-2")
+      )),
+      uiOutput("subc_results_ui")
+    )
+  })
+
+  output$subc_target_ui <- renderUI({
+    wl <- work_labels()
+    if (is.null(wl)) return(div(class = "small text-warning", t("subc_need_init")))
+    leaves <- sort(unique(wl))
+    selectizeInput("subc_target", t("subc_target"), choices = leaves,
+                   selected = isolate(input$subc_target), multiple = TRUE,
+                   options = list(plugins = list("remove_button")))
+  })
+
+  observeEvent(input$subc_init, {
+    req(seurat_obj(), input$mk_cluster)
+    obj <- seurat_obj()
+    if (!(input$mk_cluster %in% names(obj@meta.data))) return()
+    lab <- as.character(obj@meta.data[[input$mk_cluster]])
+    names(lab) <- rownames(obj@meta.data)
+    # アクティブの選択クラスターに限定（未選択なら全て）
+    sel <- selected_clusters("mk", obj, input$mk_cluster)
+    lab <- lab[lab %in% sel]
+    work_labels(lab)
+    subc_parents(NULL)
+  })
+
+  observeEvent(input$subc_run, {
+    req(seurat_obj())
+    wl <- work_labels()
+    if (is.null(wl)) { showNotification(t("subc_need_init"), type = "warning"); return() }
+    targets <- input$subc_target; k <- input$subc_k %||% 2
+    req(length(targets) > 0, k >= 2)
+    showNotification(t("subc_running"), id = "subc", type = "message", duration = NULL)
+    tryCatch({
+      obj <- seurat_obj(); children <- character(0)
+      for (tg in targets) {
+        cells <- names(wl)[wl == tg]
+        sub <- quick_subcluster(obj, cells, k)
+        if (is.null(sub)) next
+        childlab <- paste0(tg, ".", sub - 1)        # 入れ子命名: tg.0, tg.1, ...
+        wl[names(sub)] <- childlab
+        children <- c(children, unique(childlab))
+      }
+      work_labels(wl); subc_parents(sort(unique(children)))
+      showNotification(sprintf(t("subc_done"), length(unique(children))),
+                       id = "subc", type = "message", duration = 5)
+    }, error = function(e) {
+      showNotification(paste(t("notify_error"), conditionMessage(e)), type = "error", id = "subc")
+    })
+  })
+
+  # 生成したサブクラスターを同じリファレンスと統合して再計算
+  subc_view <- reactive({
+    parents <- subc_parents(); wl <- work_labels()
+    if (is.null(parents) || length(parents) == 0 || is.null(wl)) return(NULL)
+    rb <- ref_obj(); if (is.null(rb)) return(NULL)
+    genes <- resolve_marker_genes("mk")
+    A <- avg_pct_labels(seurat_obj(), wl, parents, genes)
+    rcv <- ref_tab_cluster("mk")
+    R <- if (!is.null(rcv)) {
+      dot_avg_pct(rb, rcv, selected_clusters_v(input$mk_clusters_sel_ref, rb, rcv), genes)
+    } else NULL
+    cc <- combine_dot_corr(A, R, active_name(), ref_name() %||% "ref")
+    if (is.null(cc)) return(NULL)
+    hm <- combine_hm(A$avg, R$avg, active_name(), ref_name() %||% "ref", TRUE)
+    list(cc = cc,
+         hm = hm,
+         hm_src = if (!is.null(hm)) setNames(sub(" \\| .*$", "", colnames(hm)), colnames(hm)) else NULL)
+  })
+
+  output$subc_results_ui <- renderUI({
+    if (is.null(subc_view())) {
+      return(div(class = "text-center text-muted py-4", h5(t("subc_placeholder"))))
+    }
+    tagList(
+      h6("\U0001F525 Heatmap", class = "text-primary mt-2"),
+      plotOutput("subc_heatmap", height = act_h(), width = act_w()),
+      h6("\U0001F535 Dot plot", class = "text-primary mt-3"),
+      plotOutput("subc_dot", height = act_h(), width = act_w()),
+      div(class = "mt-3",
+        h6(class = "text-primary", t("corr_title"), " ",
+           bslib::tooltip(tags$span(icon("circle-question"), style = "cursor: help;"),
+                          t("corr_help"), placement = "right")),
+        downloadButton("subc_corr_dl", t("corr_download"), class = "btn-outline-success btn-sm mb-2"),
+        DTOutput("subc_corr_table"))
+    )
+  })
+
+  output$subc_heatmap <- renderPlot({
+    v <- subc_view(); req(v, !is.null(v$hm))
+    build_hm_ggplot(v$hm, "", TRUE, TRUE, row_source = v$hm_src)
+  }, bg = "transparent")
+  output$subc_dot <- renderPlot({
+    v <- subc_view(); req(v)
+    combined_dot_ggplot(v$cc, input$subc_dot_scale %||% 6)
+  }, bg = "transparent")
+  output$subc_corr_table <- renderDT({ v <- subc_view(); req(v); corr_datatable(v$cc$corr) })
+  output$subc_corr_dl <- downloadHandler(
+    filename = function() "subcluster_vs_reference_correspondence.csv",
+    content = function(file) {
+      v <- subc_view(); if (!is.null(v)) utils::write.csv(v$cc$corr, file, row.names = FALSE)
+    }
+  )
+  output$subc_anno_dl <- downloadHandler(
+    filename = function() "subcluster_annotation.csv",
+    content = function(file) {
+      wl <- work_labels()
+      if (!is.null(wl)) utils::write.csv(
+        data.frame(cell = names(wl), label = unname(wl), stringsAsFactors = FALSE),
+        file, row.names = FALSE)
     }
   )
 
