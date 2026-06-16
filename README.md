@@ -15,7 +15,8 @@ feature immediately.
 | Tab | What it does |
 |-----|--------------|
 | 🎻 **Expression** | One tab with shared **gene** and **group-variable** controls and three inner sub-tabs: **Violin** (gene across groups), **Feature UMAP** (gene on the embedding), and **Group UMAP** (embedding colored by a metadata column; hover a point to see its cluster). |
-| 📊 **DEG** | Differential expression (`FindMarkers`) with a Volcano plot and a searchable table. Supports **categorical** comparisons (Group 1 vs one **or multiple** control groups, or "all others") and **numeric** comparisons (Top X% vs Bottom X% of a continuous score). The tested **genes** can be restricted to *all genes*, a *marker set*, a *set + your own genes*, or *only your own genes*. |
+| 📊 **DEG** | Differential expression (`FindMarkers`) with a Volcano plot and a searchable table. Supports **categorical** comparisons (Group 1 vs one **or multiple** control groups, or "all others") and **numeric** comparisons (Top X% vs Bottom X% of a continuous score). The tested **genes** can be restricted to *all genes*, a *marker set*, a *set + your own genes*, or *only your own genes*. One click sends the significant **up- or down-DEGs to Enrichr** and opens the results. |
+| 🧬 **GSEA** | Gene-set enrichment (`fgsea`) against **MSigDB** collections (`msigdbr`): pick a group to rank genes (fast ranking via `presto`), choose a collection (Hallmark, C2, C5, …), and view a top-pathways NES bar plot and a sortable results table (NES, padj, leading edge, MSigDB link). |
 | 🧱 **Composition** | Stacked proportion bar plot (e.g. cluster composition per donor), with optional **nested faceting** by additional variables (e.g. `site` + `study`). |
 | 🔥 **Heatmap / Dot** | One tab with shared gene/cluster controls and two inner sub-tabs: a **Heatmap** (mean-expression, optional per-gene Z-scoring and row/column clustering) and a **Dot Plot** (dot size = % expressing, color = scaled mean, optional marker-group facets). |
 
@@ -68,9 +69,12 @@ feature immediately.
 
 ```r
 install.packages(c("shiny", "bslib", "ggplot2", "DT", "ggrepel",
-                   "ggh4x", "plotly", "patchwork"))
+                   "ggh4x", "plotly", "patchwork",
+                   "msigdbr", "presto", "httr", "jsonlite"))
 # Seurat (and its dependency Matrix):
 install.packages("Seurat")
+# fgsea (Bioconductor) for the GSEA tab:
+if (!require("BiocManager")) install.packages("BiocManager"); BiocManager::install("fgsea")
 ```
 
 `ggh4x` enables nested facets in the Composition tab (falls back to `facet_grid`

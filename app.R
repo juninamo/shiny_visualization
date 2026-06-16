@@ -374,6 +374,30 @@ i18n <- list(
     notify_deg_no_features = "解析対象の遺伝子が選択されていません。",
     notify_deg_done     = "✅ DEG解析完了: %d Up, %d Down",
 
+    # Enrichr
+    enrichr_up        = "Up-DEG → Enrichr",
+    enrichr_down      = "Down-DEG → Enrichr",
+    enrichr_none      = "有意な遺伝子がありません。",
+    enrichr_opening   = "Enrichrにリストを送信中...",
+    enrichr_open      = "Enrichrで結果を開く (%s, %d遺伝子)",
+    enrichr_err       = "Enrichrへの送信に失敗しました: ",
+
+    # GSEA
+    gsea_settings     = "GSEA解析設定 (fgsea × MSigDB)",
+    gsea_group_var    = "グループ変数",
+    gsea_group1       = "対象グループ (このグループで上昇する順にランキング)",
+    gsea_species      = "種",
+    gsea_collection   = "MSigDB コレクション",
+    gsea_minsize      = "最小サイズ",
+    gsea_maxsize      = "最大サイズ",
+    gsea_run          = "GSEAを実行",
+    gsea_running      = "GSEA実行中... (遺伝子ランキング → fgsea)",
+    gsea_done         = "✅ GSEA完了: %d パスウェイ検定, 有意(padj<0.05) %d",
+    gsea_no_genes     = "ランキングに使える遺伝子がありません。",
+    gsea_no_sets      = "重複する遺伝子セットがありません（パネルが小さい可能性）。",
+    gsea_placeholder  = "設定して「GSEAを実行」ボタンを押してください",
+    gsea_nes_title    = "上位パスウェイ (NES)",
+
     # プレースホルダ
     placeholder_load  = "\U0001F4C2 RDSファイルを選択して「読み込む」ボタンを押してください",
     placeholder_deg   = "上のパネルでグループを設定し「DEG解析を実行」ボタンを押してください",
@@ -483,6 +507,30 @@ i18n <- list(
     notify_deg_no_features = "No genes are selected for analysis.",
     notify_deg_done     = "✅ DEG complete: %d Up, %d Down",
 
+    # Enrichr
+    enrichr_up        = "Up-DEGs → Enrichr",
+    enrichr_down      = "Down-DEGs → Enrichr",
+    enrichr_none      = "No significant genes.",
+    enrichr_opening   = "Submitting list to Enrichr...",
+    enrichr_open      = "Open results in Enrichr (%s, %d genes)",
+    enrichr_err       = "Failed to submit to Enrichr: ",
+
+    # GSEA
+    gsea_settings     = "GSEA Settings (fgsea × MSigDB)",
+    gsea_group_var    = "Group Variable",
+    gsea_group1       = "Target group (rank by up-regulation in this group)",
+    gsea_species      = "Species",
+    gsea_collection   = "MSigDB Collection",
+    gsea_minsize      = "Min size",
+    gsea_maxsize      = "Max size",
+    gsea_run          = "Run GSEA",
+    gsea_running      = "Running GSEA... (ranking genes → fgsea)",
+    gsea_done         = "✅ GSEA done: %d pathways tested, %d significant (padj<0.05)",
+    gsea_no_genes     = "No genes available for ranking.",
+    gsea_no_sets      = "No overlapping gene sets (panel may be small).",
+    gsea_placeholder  = "Configure and click 'Run GSEA'",
+    gsea_nes_title    = "Top pathways (NES)",
+
     # Placeholders
     placeholder_load  = "\U0001F4C2 Select an RDS file and click 'Load'",
     placeholder_deg   = "Configure groups above and click 'Run DEG Analysis'",
@@ -542,6 +590,15 @@ ui <- page_sidebar(
       card_body(
         class = "p-2",
         uiOutput("deg_panel_ui")
+      )
+    ),
+
+    nav_panel(
+      title = "\U0001F9EC GSEA",
+      value = "gsea",
+      card_body(
+        class = "p-2",
+        uiOutput("gsea_panel_ui")
       )
     ),
 
@@ -2496,6 +2553,14 @@ server <- function(input, output, session) {
     }
 
     tagList(
+      # Enrichr へ送るボタン（有意な Up / Down DEG）
+      div(class = "mb-2 d-flex gap-2 align-items-center flex-wrap",
+        actionButton("enrichr_up_btn", t("enrichr_up"),
+                     class = "btn-outline-danger btn-sm", icon = icon("up-long")),
+        actionButton("enrichr_down_btn", t("enrichr_down"),
+                     class = "btn-outline-primary btn-sm", icon = icon("down-long")),
+        uiOutput("enrichr_link_ui", inline = TRUE)
+      ),
       # Volcano Plot
       div(class = "mb-3", volcano_out),
       # DEGテーブル
@@ -2503,6 +2568,46 @@ server <- function(input, output, session) {
         DTOutput("deg_table")
       )
     )
+  })
+
+  # --- Enrichr 連携（有意な Up/Down DEG を Enrichr に送信しリンクを表示） ---
+  enrichr_link <- reactiveVal(NULL)
+  submit_enrichr <- function(direction) {
+    res <- deg_results()
+    if (is.null(res)) return()
+    genes <- res$gene[res$significance == direction]
+    if (length(genes) == 0) {
+      showNotification(t("enrichr_none"), type = "warning")
+      return()
+    }
+    showNotification(t("enrichr_opening"), id = "enrichr", type = "message")
+    tryCatch({
+      r <- httr::POST(
+        "https://maayanlab.cloud/Enrichr/addList",
+        body = list(list = paste(genes, collapse = "\n"),
+                    description = paste0("shiny_", direction)),
+        encode = "multipart")
+      httr::stop_for_status(r)
+      # Enrichr は content-type が text/html だが本文は JSON なので明示的にパース
+      sid <- jsonlite::fromJSON(httr::content(r, "text", encoding = "UTF-8"))$shortId
+      if (is.null(sid) || !nzchar(sid)) stop("no shortId")
+      url <- paste0("https://maayanlab.cloud/Enrichr/enrich?dataset=", sid)
+      enrichr_link(list(url = url, dir = direction, n = length(genes)))
+      removeNotification("enrichr")
+    }, error = function(e) {
+      showNotification(paste0(t("enrichr_err"), conditionMessage(e)),
+                       type = "error", id = "enrichr")
+    })
+  }
+  observeEvent(input$enrichr_up_btn,   { submit_enrichr("Up") })
+  observeEvent(input$enrichr_down_btn, { submit_enrichr("Down") })
+  output$enrichr_link_ui <- renderUI({
+    l <- enrichr_link()
+    if (is.null(l)) return(NULL)
+    tags$a(href = l$url, target = "_blank",
+           class = "btn btn-success btn-sm",
+           icon("up-right-from-square"),
+           sprintf(t("enrichr_open"), l$dir, l$n))
   })
 
   # --- Volcano Plot ビルダー（静的/インタラクティブ共通） ---
@@ -2635,6 +2740,191 @@ server <- function(input, output, session) {
         )
       ),
       colnames = c("Gene", "avg_log2FC", "pct.1", "pct.2", "p_val_adj", "Status", "External DB")
+    )
+  })
+
+  # ==========================================================================
+  # GSEA (fgsea × MSigDB)
+  # ==========================================================================
+  gsea_results <- reactiveVal(NULL)
+
+  # MSigDB コレクション選択肢（H, C2:..., C5:... など）
+  gsea_collections <- reactive({
+    if (!requireNamespace("msigdbr", quietly = TRUE)) return(NULL)
+    colls <- tryCatch(msigdbr::msigdbr_collections(), error = function(e) NULL)
+    if (is.null(colls)) return(NULL)
+    labs <- ifelse(colls$gs_subcat == "", colls$gs_cat,
+                   paste0(colls$gs_cat, ": ", colls$gs_subcat))
+    setNames(paste(colls$gs_cat, colls$gs_subcat, sep = "|"), labs)
+  })
+
+  output$gsea_panel_ui <- renderUI({
+    lang <- input$lang
+    if (!data_loaded()) return(placeholder_ui())
+    if (!requireNamespace("fgsea", quietly = TRUE) ||
+        !requireNamespace("msigdbr", quietly = TRUE) ||
+        !requireNamespace("presto", quietly = TRUE)) {
+      return(div(class = "text-center text-warning py-4",
+        h5("fgsea / msigdbr / presto が必要です: install.packages(c('msigdbr','presto')); BiocManager::install('fgsea')")))
+    }
+    cat_cols <- meta_col_types()$cat
+    if (length(cat_cols) == 0) {
+      return(div(class = "text-center text-muted py-4", h5(t("comp_no_cat"))))
+    }
+    gv_sel <- isolate(input$gsea_group_var)
+    gv_sel <- if (!is.null(gv_sel) && gv_sel %in% cat_cols) gv_sel
+              else if ("seurat_clusters" %in% cat_cols) "seurat_clusters" else cat_cols[1]
+    colls <- gsea_collections()
+    coll_sel <- isolate(input$gsea_collection)
+    if (is.null(coll_sel) || !(coll_sel %in% colls)) coll_sel <- "H|"
+
+    tagList(
+      div(class = "card mb-3", div(class = "card-body",
+        h6(t("gsea_settings"), class = "card-title text-primary"),
+        fluidRow(
+          column(6, selectInput("gsea_group_var", t("gsea_group_var"),
+                                choices = cat_cols, selected = gv_sel)),
+          column(6, uiOutput("gsea_group1_ui"))
+        ),
+        fluidRow(
+          column(4, selectInput("gsea_species", t("gsea_species"),
+                                choices = c("Homo sapiens", "Mus musculus"),
+                                selected = isolate(input$gsea_species) %||% "Homo sapiens")),
+          column(8, selectInput("gsea_collection", t("gsea_collection"),
+                                choices = colls, selected = coll_sel))
+        ),
+        fluidRow(
+          column(4, numericInput("gsea_minsize", t("gsea_minsize"),
+                                value = isolate(input$gsea_minsize) %||% 5, min = 1, step = 1)),
+          column(4, numericInput("gsea_maxsize", t("gsea_maxsize"),
+                                value = isolate(input$gsea_maxsize) %||% 500, min = 10, step = 10)),
+          column(4, div(style = "margin-top: 24px;",
+            actionButton("gsea_run", t("gsea_run"), class = "btn-primary w-100",
+                         icon = icon("dna"))))
+        )
+      )),
+      uiOutput("gsea_results_ui")
+    )
+  })
+
+  output$gsea_group1_ui <- renderUI({
+    req(input$gsea_group_var, seurat_obj())
+    gv <- input$gsea_group_var
+    if (!(gv %in% names(seurat_obj()@meta.data))) return(NULL)
+    groups <- cluster_level_order(seurat_obj()@meta.data[[gv]])
+    selectInput("gsea_group1", t("gsea_group1"), choices = groups, selected = groups[1])
+  })
+
+  observeEvent(input$gsea_run, {
+    req(seurat_obj(), input$gsea_group_var, input$gsea_group1)
+    showNotification(t("gsea_running"), id = "gsea", type = "message", duration = NULL)
+    tryCatch({
+      obj <- seurat_obj()
+      gv <- input$gsea_group_var; g1 <- input$gsea_group1
+      mat <- get_expr_matrix(obj, rownames(obj))   # 全遺伝子 x 細胞
+      if (is.null(mat) || nrow(mat) < 5) {
+        showNotification(t("gsea_no_genes"), type = "error", id = "gsea"); return()
+      }
+      labels <- as.character(obj@meta.data[colnames(mat), gv])
+      keep <- !is.na(labels) & labels != ""
+      mat <- mat[, keep, drop = FALSE]; labels <- labels[keep]
+      grp <- ifelse(labels == g1, g1, "rest")
+      if (length(unique(grp)) < 2) {
+        showNotification(t("gsea_no_genes"), type = "error", id = "gsea"); return()
+      }
+      pr <- presto::wilcoxauc(mat, grp)
+      sub <- pr[pr$group == g1, , drop = FALSE]
+      ranks <- setNames(sub$logFC, sub$feature)
+      ranks <- ranks[is.finite(ranks) & !is.na(names(ranks)) & !duplicated(names(ranks))]
+      if (length(ranks) < 5) {
+        showNotification(t("gsea_no_genes"), type = "error", id = "gsea"); return()
+      }
+      ranks <- sort(ranks, decreasing = TRUE)
+      sel <- strsplit(input$gsea_collection, "\\|")[[1]]
+      catg <- sel[1]; subcat <- if (length(sel) >= 2) sel[2] else ""
+      msig <- msigdbr::msigdbr(species = input$gsea_species, category = catg,
+                               subcategory = if (nzchar(subcat)) subcat else NULL)
+      pathways <- split(msig$gene_symbol, msig$gs_name)
+      fg <- fgsea::fgsea(pathways = pathways, stats = ranks,
+                         minSize = max(1, input$gsea_minsize %||% 5),
+                         maxSize = max(10, input$gsea_maxsize %||% 500))
+      if (is.null(fg) || nrow(fg) == 0) {
+        showNotification(t("gsea_no_sets"), type = "warning", id = "gsea"); return()
+      }
+      fg <- fg[order(fg$padj), ]
+      gsea_results(fg)
+      nsig <- sum(fg$padj < 0.05, na.rm = TRUE)
+      showNotification(sprintf(t("gsea_done"), nrow(fg), nsig),
+                       id = "gsea", type = "message", duration = 6)
+    }, error = function(e) {
+      showNotification(paste(t("notify_error"), conditionMessage(e)),
+                       type = "error", id = "gsea")
+    })
+  })
+
+  output$gsea_results_ui <- renderUI({
+    if (is.null(gsea_results())) {
+      return(div(class = "text-center text-muted py-4", h5(t("gsea_placeholder"))))
+    }
+    tagList(
+      div(class = "mb-3", plotOutput("gsea_plot", height = "460px")),
+      div(DTOutput("gsea_table"))
+    )
+  })
+
+  output$gsea_plot <- renderPlot({
+    fg <- gsea_results(); req(fg)
+    pt <- plot_theme()
+    top <- utils::head(fg[order(fg$padj), ], 20)
+    top <- top[order(top$NES), ]
+    top$pathway <- factor(as.character(top$pathway), levels = as.character(top$pathway))
+    ggplot(top, aes(x = NES, y = pathway, fill = NES > 0)) +
+      geom_col() +
+      scale_fill_manual(values = c("FALSE" = "#3498db", "TRUE" = "#e74c3c"), guide = "none") +
+      labs(title = t("gsea_nes_title"), x = "NES", y = NULL) +
+      theme_minimal(base_size = 12) +
+      theme(
+        plot.background = element_rect(fill = pt$bg, color = NA),
+        panel.background = element_rect(fill = pt$bg, color = NA),
+        panel.grid.major.y = element_blank(),
+        text = element_text(color = pt$fg),
+        axis.text = element_text(color = pt$fg2),
+        axis.text.y = element_text(size = 9),
+        plot.title = element_text(size = 15, face = "bold", color = pt$accent)
+      )
+  }, bg = "transparent")
+
+  output$gsea_table <- renderDT({
+    fg <- gsea_results(); req(fg)
+    df <- data.frame(
+      pathway = as.character(fg$pathway),
+      NES = round(fg$NES, 3),
+      pval = fg$pval,
+      padj = fg$padj,
+      size = fg$size,
+      leadingEdge = vapply(fg$leadingEdge,
+                           function(x) paste(utils::head(x, 30), collapse = ", "),
+                           character(1)),
+      stringsAsFactors = FALSE
+    )
+    df$Link <- paste0(
+      '<a href="https://www.gsea-msigdb.org/gsea/msigdb/cards/', df$pathway,
+      '.html" target="_blank" class="btn btn-outline-info btn-sm btn-xs">MSigDB</a>')
+    datatable(
+      df, escape = FALSE, rownames = FALSE, filter = "top",
+      options = list(
+        pageLength = 20, order = list(list(3, "asc")), dom = "Blfrtip", scrollX = TRUE,
+        columnDefs = list(list(
+          targets = c(2, 3),
+          render = DT::JS(
+            "function(data, type, row, meta) {",
+            "  if (type === 'display' || type === 'filter') {",
+            "    if (data === null) return '';",
+            "    return Number(data).toExponential(2);",
+            "  }",
+            "  return data;",
+            "}")))),
+      colnames = c("Pathway", "NES", "pval", "padj", "Size", "Leading edge", "DB")
     )
   })
 }
