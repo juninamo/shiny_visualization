@@ -3621,7 +3621,11 @@ server <- function(input, output, session) {
                                   min = 0, max = 1, value = isolate(input$spatial_other_alpha) %||% 0.3, step = 0.05)),
             column(3, sliderInput("spatial_other_size", t("spatial_other_size"),
                                   min = 0.1, max = 4, value = isolate(input$spatial_other_size) %||% 0.6, step = 0.1))
-          ))
+          )),
+        # 近傍解析(Neighborhood/Co-occurrence/Enrichment)用のサンプル選択
+        # （3タブで共有。Map以外のサブタブ表示時のみ）
+        conditionalPanel("input.spatial_subtab && input.spatial_subtab != 'map'",
+          uiOutput("spatial_nbr_sample_ui"))
       )),
       navset_card_tab(
         id = "spatial_subtab",
@@ -3914,8 +3918,6 @@ server <- function(input, output, session) {
     lang <- input$lang
     if (!data_loaded()) return(placeholder_ui())
     tagList(
-      # 近傍解析専用のサンプル選択（マップ表示用のサンプル選択とは独立）
-      uiOutput("spatial_nbr_sample_ui"),
       div(class = "d-flex align-items-center gap-2 mb-2",
         actionButton("spatial_nbr_run", t("spatial_nbr_run"),
                      class = "btn-primary btn-sm", icon = icon("ruler")),
@@ -4058,7 +4060,6 @@ server <- function(input, output, session) {
     lang <- input$lang
     if (!data_loaded()) return(placeholder_ui())
     tagList(
-      uiOutput("spatial_nbr_sample_ui"),
       div(class = "d-flex align-items-center gap-2 mb-2",
         actionButton("spatial_co_run", t("spatial_co_run"), class = "btn-primary btn-sm",
                      icon = icon("link")),
@@ -4151,7 +4152,6 @@ server <- function(input, output, session) {
     lang <- input$lang
     if (!data_loaded()) return(placeholder_ui())
     tagList(
-      uiOutput("spatial_nbr_sample_ui"),
       fluidRow(
         column(4, numericInput("spatial_ne_k", t("spatial_ne_k"),
                                value = isolate(input$spatial_ne_k) %||% 6, min = 2, max = 30, step = 1)),
