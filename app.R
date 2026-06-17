@@ -729,6 +729,17 @@ ui <- page_sidebar(
     "navbar-bg" = "#1a1d23"
   ),
 
+  # --- 計算中インジケータ（Shinyが計算中=html.shiny-busy のときCSSで表示）---
+  tags$head(tags$style(HTML("
+    #app-busy { display: none; position: fixed; top: 64px; right: 22px; z-index: 100000;
+      background: rgba(33,37,41,0.94); color: #fff; padding: 9px 16px; border-radius: 8px;
+      font-size: 14px; box-shadow: 0 3px 10px rgba(0,0,0,0.35); align-items: center; gap: 9px; }
+    html.shiny-busy #app-busy { display: inline-flex; }
+  "))),
+  tags$div(id = "app-busy",
+    tags$span(class = "spinner-border spinner-border-sm", role = "status"),
+    tags$span("計算中… / Computing…")),
+
   # --- サイドバー ---
   sidebar = sidebar(
     width = 460,
