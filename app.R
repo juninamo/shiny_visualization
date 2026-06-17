@@ -505,7 +505,7 @@ i18n <- list(
     spatial_ne_k      = "近傍数 k",
     spatial_ne_perm   = "並べ替え回数",
     spatial_ne_title  = "Neighbors enrichment z-score (正:隣接, 負:回避)",
-    spatial_ne_help   = "squidpy の nhood_enrichment を参考にした指標です。各細胞の k 近傍で空間グラフを作り、クラスター間の隣接エッジ数を、ラベルをランダムに並べ替えた帰無分布と比較して z-score を計算します。正の値はそのクラスター対が予想より隣接、負の値は回避を意味します。z-score 行列をヒートマップで表示します(同一サンプル内のエッジのみ)。",
+    spatial_ne_help   = "squidpy の nhood_enrichment を参考にした指標です。各細胞の k 近傍で空間グラフを作り、クラスター間の隣接エッジ数を、ラベルをランダムに並べ替えた帰無分布と比較して z-score を計算します。正の値はそのクラスター対が予想より隣接、負の値は回避を意味します。z-score 行列をヒートマップで表示します(同一サンプル内のエッジのみ)。 有意なペアにアスタリスク(z→正規近似で両側p値→BH補正; *<0.05, **<0.01, ***<0.001)を表示します。行・列は階層クラスタリングで並べ替えます。",
     spatial_need_run  = "対象を選び「計算」ボタンを押してください。",
 
     # プレースホルダ
@@ -706,7 +706,7 @@ i18n <- list(
     spatial_ne_k      = "Neighbors k",
     spatial_ne_perm   = "Permutations",
     spatial_ne_title  = "Neighbors-enrichment z-score (positive: adjacent, negative: avoidance)",
-    spatial_ne_help   = "Inspired by squidpy's nhood_enrichment. Builds a spatial kNN graph and compares the number of edges between each cluster pair to a permutation null (shuffled labels) as a z-score. Positive = that cluster pair is adjacent more than expected, negative = avoidance. Shown as a z-score matrix heatmap (within-sample edges only).",
+    spatial_ne_help   = "Inspired by squidpy's nhood_enrichment. Builds a spatial kNN graph and compares the number of edges between each cluster pair to a permutation null (shuffled labels) as a z-score. Positive = that cluster pair is adjacent more than expected, negative = avoidance. Shown as a z-score matrix heatmap (within-sample edges only). Significant pairs are marked with asterisks (z -> two-sided p via normal approx -> BH; *<0.05, **<0.01, ***<0.001). Rows and columns are hierarchically clustered.",
     spatial_need_run  = "Select targets and click Compute.",
 
     # Placeholders
@@ -3978,7 +3978,7 @@ server <- function(input, output, session) {
       nn <- tryCatch(FNN::get.knnx(as.matrix(b), as.matrix(a), k = 1)$nn.dist[, 1],
                      error = function(e) NULL)
       if (is.null(nn)) nn <- apply(as.matrix(a), 1, function(p)
-        sqrt(min(colSums((t(as.matrix(b)) - p)^2))))
+        sqrt(min(colSums((base::t(as.matrix(b)) - p)^2))))
       nn <- nn[is.finite(nn) & nn > 0]
       if (length(nn) < 3) NULL else nn
     })
@@ -4220,15 +4220,29 @@ server <- function(input, output, session) {
   spatial_ne_ggplot <- reactive({
     z <- spatial_ne_obj(); req(z)
     pt <- plot_theme()
-    ord <- cluster_level_order(rownames(z))
+    levs <- rownames(z); K <- length(levs)
+    zc <- z; zc[!is.finite(zc)] <- 0
+    # 行・列を階層クラスタリングして似たものを近くに（対称行列なので行=列順）
+    ord <- if (K > 2) levs[stats::hclust(stats::dist(zc))$order] else levs
+    # z-score を正規近似で両側p値に変換 → ユニークなペア(上三角)で BH 補正
+    pmat <- 2 * stats::pnorm(-abs(z))
+    padj <- matrix(NA_real_, K, K, dimnames = dimnames(z))
+    ut <- upper.tri(pmat, diag = TRUE)
+    padj[ut] <- stats::p.adjust(pmat[ut], method = "BH")
+    padj[lower.tri(padj)] <- base::t(padj)[lower.tri(padj)]   # 対称化（t は翻訳ヘルパー）
+    star <- function(p) ifelse(is.na(p), "",
+              ifelse(p < 0.001, "***", ifelse(p < 0.01, "**", ifelse(p < 0.05, "*", ""))))
     df <- data.frame(
-      a = factor(rep(rownames(z), times = ncol(z)), levels = ord),
-      b = factor(rep(colnames(z), each = nrow(z)), levels = ord),
-      z = as.vector(z), stringsAsFactors = FALSE)
-    df$tip <- paste0(df$a, " - ", df$b, "<br>z: ", round(df$z, 2))
+      a = factor(rep(levs, times = K), levels = ord),
+      b = factor(rep(levs, each = K), levels = ord),
+      z = as.vector(z), padj = as.vector(padj), stringsAsFactors = FALSE)
+    df$lab <- star(df$padj)
+    df$tip <- paste0(df$a, " - ", df$b, "<br>z: ", round(df$z, 2),
+                     "<br>padj: ", signif(df$padj, 2), " ", df$lab)
     lim <- max(abs(df$z), na.rm = TRUE)
     ggplot(df, aes(x = a, y = b, fill = z, text = tip)) +
       geom_tile(color = "white", linewidth = 0.2) +
+      geom_text(aes(label = lab), size = 3, color = "black", fontface = "bold") +
       scale_fill_gradient2(low = "#3C5488FF", mid = "white", high = "#DC0000FF",
                            midpoint = 0, limits = c(-lim, lim), name = "z") +
       labs(x = NULL, y = NULL, title = t("spatial_ne_title")) +
