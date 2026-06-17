@@ -950,6 +950,27 @@ server <- function(input, output, session) {
   })
 
   # --- 外部データベースリンク ---
+  # 遺伝子セレクタ(gene/spatial_gene)はサーバーサイドで選択肢を投入し、
+  # 大量の遺伝子でもクライアントが重くならないようにする。
+  observe({
+    if (!isTRUE(data_loaded())) return()
+    input$lang
+    if (!identical(input$main_tabs, "expression")) return()
+    obj <- seurat_obj(); if (is.null(obj)) return()
+    genes <- sort(rownames(obj))
+    sel <- isolate(input$gene); if (is.null(sel) || !(sel %in% genes)) sel <- genes[1]
+    updateSelectizeInput(session, "gene", choices = genes, selected = sel, server = TRUE)
+  })
+  observe({
+    if (!isTRUE(data_loaded())) return()
+    input$lang; input$spatial_by
+    if (!identical(input$main_tabs, "spatial")) return()
+    obj <- spatial_obj(); if (is.null(obj)) return()
+    genes <- sort(rownames(obj))
+    sel <- isolate(input$spatial_gene); if (is.null(sel) || !(sel %in% genes)) sel <- genes[1]
+    updateSelectizeInput(session, "spatial_gene", choices = genes, selected = sel, server = TRUE)
+  })
+
   output$external_links_ui <- renderUI({
     req(input$gene)
     gene <- input$gene
@@ -1490,7 +1511,10 @@ server <- function(input, output, session) {
       div(class = "card mb-3", div(class = "card-body",
         fluidRow(
           column(6,
-            selectizeInput("gene", t("gene_name"), choices = genes, selected = gsel,
+            # 遺伝子リストはサーバーサイドで投入（多数の選択肢でも高速）
+            selectizeInput("gene", t("gene_name"),
+                           choices = if (!is.null(gsel)) stats::setNames(gsel, gsel) else NULL,
+                           selected = gsel,
                            options = list(placeholder = t("gene_placeholder"),
                                           maxOptions = 1000)),
             uiOutput("external_links_ui")
@@ -3587,7 +3611,8 @@ server <- function(input, output, session) {
               selectInput("spatial_color", t("spatial_color"),
                           choices = color_choices, selected = col_sel)),
             conditionalPanel("input.spatial_by == 'gene'",
-              selectizeInput("spatial_gene", t("spatial_gene"), choices = genes,
+              selectizeInput("spatial_gene", t("spatial_gene"),
+                             choices = if (!is.null(gene_sel)) stats::setNames(gene_sel, gene_sel) else NULL,
                              selected = gene_sel,
                              options = list(placeholder = t("gene_placeholder"),
                                             maxOptions = 1000)))
