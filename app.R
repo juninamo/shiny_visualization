@@ -268,6 +268,28 @@ get_expr_matrix <- function(obj, genes) {
   mat[, cells, drop = FALSE]
 }
 
+# --- 並列処理ヘルパー ---------------------------------------------------------
+# 利用可能なワーカー数（1コア残し、最大8）。環境変数 SHINY_VIZ_THREADS で上書き可。
+n_workers <- function() {
+  ov <- suppressWarnings(as.integer(Sys.getenv("SHINY_VIZ_THREADS", "")))
+  if (!is.na(ov) && ov >= 1) return(ov)
+  n <- tryCatch(parallel::detectCores(), error = function(e) 1L)
+  if (is.na(n) || n < 1) n <- 1L
+  as.integer(max(1L, min(n - 1L, 8L)))
+}
+# 各要素を seeds[i] で個別にシードして並列実行（コア数に依らず再現性を担保）。
+# fork が使える環境(mac/linux)は parallel::mclapply、それ以外は逐次 lapply。
+par_lapply_seeded <- function(X, FUN, seeds) {
+  ff <- function(i) { set.seed(seeds[[match(i, X)]]); FUN(i) }
+  nw <- n_workers()
+  if (nw > 1L && .Platform$OS.type != "windows" &&
+      requireNamespace("parallel", quietly = TRUE)) {
+    parallel::mclapply(X, ff, mc.cores = nw)
+  } else {
+    lapply(X, ff)
+  }
+}
+
 # Seurat オブジェクトから空間座標 (cell, x, y) を取り出す。
 # meta.data の x/y 系カラムを優先し、無ければ @images の TissueCoordinates。
 spatial_coords <- function(obj) {
@@ -3487,7 +3509,8 @@ server <- function(input, output, session) {
       set.seed(1)   # 再現性（fgsea の内部乱数を固定）
       fg <- fgsea::fgsea(pathways = pathways, stats = ranks,
                          minSize = max(1, input$gsea_minsize %||% 5),
-                         maxSize = max(10, input$gsea_maxsize %||% 500))
+                         maxSize = max(10, input$gsea_maxsize %||% 500),
+                         nproc = n_workers())   # マルチスレッド（利用可能時）
       if (is.null(fg) || nrow(fg) == 0) {
         showNotification(t("gsea_no_sets"), type = "warning", id = "gsea"); return()
       }
@@ -4270,20 +4293,29 @@ server <- function(input, output, session) {
     obs <- count_mat(labv)
     sm <- matrix(0, K, K); sm2 <- matrix(0, K, K)
     sample_idx <- split(seq_along(labv), sampv)
-    # 並べ替えループ: 進捗バーに 残り時間の推定 を表示
+    # 各並べ替えに固定シードを割り当て（コア数に依らず再現性を担保）
+    perm_seeds <- sample.int(.Machine$integer.max, nperm)
+    one_perm <- function(p) {
+      lp <- labv
+      for (idx in sample_idx) lp[idx] <- sample(labv[idx])   # サンプル内でシャッフル
+      count_mat(lp)
+    }
     fmt_sec <- function(s) if (s < 60) paste0(round(s), "s") else
       paste0(s %/% 60, "m", round(s %% 60), "s")
-    withProgress(message = t("spatial_ne_prog"), value = 0, {
-      t0 <- Sys.time(); step <- max(1L, nperm %/% 50L)
-      for (p in seq_len(nperm)) {
-        lp <- labv
-        for (idx in sample_idx) lp[idx] <- sample(labv[idx])   # サンプル内でシャッフル
-        cm <- count_mat(lp); sm <- sm + cm; sm2 <- sm2 + cm^2
-        if (p %% step == 0 || p == nperm) {
-          el <- as.numeric(difftime(Sys.time(), t0, units = "secs"))
-          eta <- el / p * (nperm - p)
-          setProgress(p / nperm, detail = sprintf(t("spatial_eta"), p, nperm, fmt_sec(eta)))
-        }
+    nw <- n_workers()
+    # 進捗表示のためチャンク分割（チャンク内は並列、チャンク間で進捗更新）
+    nchunk <- min(nperm, max(10L, nw * 4L))
+    chunks <- split(seq_len(nperm), cut(seq_len(nperm), nchunk, labels = FALSE))
+    msg <- if (nw > 1L) paste0(t("spatial_ne_prog"), " (", nw, " threads)") else t("spatial_ne_prog")
+    withProgress(message = msg, value = 0, {
+      t0 <- Sys.time(); done <- 0L
+      for (ch in chunks) {
+        cms <- par_lapply_seeded(ch, one_perm, perm_seeds[ch])
+        for (cm in cms) { sm <- sm + cm; sm2 <- sm2 + cm^2 }
+        done <- done + length(ch)
+        el <- as.numeric(difftime(Sys.time(), t0, units = "secs"))
+        eta <- el / done * (nperm - done)
+        setProgress(done / nperm, detail = sprintf(t("spatial_eta"), done, nperm, fmt_sec(eta)))
       }
     })
     mu <- sm / nperm; sdv <- sqrt(pmax(0, sm2 / nperm - mu^2))
