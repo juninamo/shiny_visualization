@@ -3811,6 +3811,8 @@ server <- function(input, output, session) {
     lang <- input$lang
     if (!data_loaded()) return(placeholder_ui())
     tagList(
+      # 近傍解析専用のサンプル選択（マップ表示用のサンプル選択とは独立）
+      uiOutput("spatial_nbr_sample_ui"),
       div(class = "d-flex align-items-center gap-2 mb-2",
         actionButton("spatial_nbr_run", t("spatial_nbr_run"),
                      class = "btn-primary btn-sm", icon = icon("ruler")),
@@ -3820,6 +3822,41 @@ server <- function(input, output, session) {
         plotly::plotlyOutput("spatial_nbr_plot", height = act_h(), width = act_w())
       } else plotOutput("spatial_nbr_plot_static", height = act_h(), width = act_w())
     )
+  })
+
+  # 近傍解析専用のサンプル選択UI（サンプル列に追従。複数選択可）
+  output$spatial_nbr_sample_ui <- renderUI({
+    obj <- spatial_obj(); req(obj)
+    sc <- input$spatial_sample_col
+    if (is.null(sc) || identical(sc, "__none__") || !(sc %in% names(obj@meta.data))) return(NULL)
+    vals <- sort(unique(as.character(obj@meta.data[[sc]])))
+    prev <- isolate(input$spatial_nbr_sample)
+    sel <- if (!is.null(prev) && all(prev %in% vals) && length(prev) > 0) prev else vals[1]
+    selectizeInput("spatial_nbr_sample", t("spatial_sample"), choices = vals, selected = sel,
+                   multiple = TRUE, options = list(plugins = list("remove_button")))
+  })
+
+  # 近傍解析用データ（マップとは独立: 色分け変数=クラスター + 近傍解析用サンプル）
+  spatial_nbr_df <- reactive({
+    obj <- spatial_obj(); req(obj)
+    xy <- spatial_xy(); req(xy)
+    meta <- obj@meta.data
+    cv <- input$spatial_color
+    ok <- !identical(input$spatial_by, "gene") && !is.null(cv) && cv %in% names(meta)
+    validate(need(ok, t("spatial_nbr_need")))
+    v <- meta[[cv]]
+    is_cat <- is.factor(v) || is.character(v) || (is.numeric(v) && length(unique(v)) <= 50)
+    validate(need(is_cat, t("spatial_nbr_need")))
+    df <- xy[xy$cell %in% rownames(meta), , drop = FALSE]
+    df$col <- factor(as.character(meta[df$cell, cv]), levels = cluster_level_order(meta[[cv]]))
+    sc <- input$spatial_sample_col
+    if (!is.null(sc) && !identical(sc, "__none__") && sc %in% names(meta)) {
+      df$sample <- as.character(meta[df$cell, sc])
+      sel <- input$spatial_nbr_sample
+      if (!is.null(sel) && length(sel) > 0) df <- df[df$sample %in% sel, , drop = FALSE]
+    } else df$sample <- "all"
+    validate(need(nrow(df) > 0, t("spatial_none")))
+    df
   })
 
   # 対象細胞群から他クラスター細胞群への最近接距離（同一サンプル内）
@@ -3841,12 +3878,9 @@ server <- function(input, output, session) {
   }
 
   spatial_nbr_obj <- eventReactive(input$spatial_nbr_run, {
-    pr <- spatial_prep()
-    validate(need(pr$is_cat, t("spatial_nbr_need")))
+    df <- spatial_nbr_df()
     anchors <- input$spatial_highlight
     validate(need(length(anchors) > 0, t("spatial_nbr_need")))
-    df <- pr$df
-    if (is.null(df$sample)) df$sample <- "all"
     levs <- levels(df$col)
     rows <- list()
     for (A in anchors) {
