@@ -3484,6 +3484,7 @@ server <- function(input, output, session) {
       msig <- msigdbr::msigdbr(species = input$gsea_species, category = catg,
                                subcategory = if (nzchar(subcat)) subcat else NULL)
       pathways <- split(msig$gene_symbol, msig$gs_name)
+      set.seed(1)   # 再現性（fgsea の内部乱数を固定）
       fg <- fgsea::fgsea(pathways = pathways, stats = ranks,
                          minSize = max(1, input$gsea_minsize %||% 5),
                          maxSize = max(10, input$gsea_maxsize %||% 500))
@@ -4043,6 +4044,7 @@ server <- function(input, output, session) {
 
   # 近傍距離 ECDF（距離グリッド上で「最近接 ≤ x」割合、サンプルごと→平均±SD）
   spatial_nbr_obj <- eventReactive(input$spatial_nbr_run, {
+    set.seed(1)   # 再現性（細胞の間引きを固定）
     df <- spatial_nbr_df()
     anchors <- input$spatial_highlight
     validate(need(length(anchors) > 0, t("spatial_nbr_need")))
@@ -4156,6 +4158,7 @@ server <- function(input, output, session) {
   }
 
   spatial_co_obj <- eventReactive(input$spatial_co_run, {
+    set.seed(1)   # 再現性
     df <- spatial_nbr_df()
     anchors <- input$spatial_highlight
     validate(need(length(anchors) > 0, t("spatial_need_run")))
@@ -4234,6 +4237,7 @@ server <- function(input, output, session) {
   })
 
   spatial_ne_obj <- eventReactive(input$spatial_ne_run, {
+    set.seed(1)   # 再現性（間引き + 並べ替え検定を固定）
     df <- spatial_nbr_df()
     validate(need(nlevels(droplevels(df$col)) >= 2, t("spatial_need_run")))
     k <- max(2, input$spatial_ne_k %||% 6); nperm <- max(20, input$spatial_ne_perm %||% 100)
@@ -4310,14 +4314,21 @@ server <- function(input, output, session) {
     df$lab <- star(df$padj)
     df$tip <- paste0(df$a, " - ", df$b, "<br>z: ", round(df$z, 2),
                      "<br>padj: ", signif(df$padj, 2), " ", df$lab)
-    lim <- max(abs(df$z), na.rm = TRUE)
+    # 自己ペア(対角)の z は非常に大きく、それに合わせると非対角(=注目したい
+    # クラスター間)の色が白付近に潰れる。色の範囲は非対角の値を基準に決め、
+    # 範囲外(対角など)は squish で両端の色にクリップして 0付近の解像度を上げる。
+    offdiag <- df$z[as.character(df$a) != as.character(df$b)]
+    lim <- stats::quantile(abs(offdiag), 0.98, na.rm = TRUE)
+    if (!is.finite(lim) || lim <= 0) lim <- max(abs(df$z), na.rm = TRUE)
+    lim <- max(lim, 2)   # 最低でも ±2 は表示
     p <- ggplot(df, aes(x = a, y = b, fill = z, text = tip)) +
-      geom_tile(color = "white", linewidth = 0.2)
+      geom_tile(color = "grey80", linewidth = 0.3)   # 白に潰れても枠で見える
     if (isTRUE(input$spatial_ne_stars %||% TRUE))
       p <- p + geom_text(aes(label = lab), size = 3, color = "black", fontface = "bold")
     p +
-      scale_fill_gradient2(low = "#3C5488FF", mid = "white", high = "#DC0000FF",
-                           midpoint = 0, limits = c(-lim, lim), name = "z") +
+      scale_fill_gradient2(low = "#3C5488FF", mid = "#F7F7F7", high = "#DC0000FF",
+                           midpoint = 0, limits = c(-lim, lim),
+                           oob = scales::squish, name = "z") +
       labs(x = NULL, y = NULL, title = t("spatial_ne_title")) +
       theme_minimal(base_size = 11) +
       theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5, size = 8),
