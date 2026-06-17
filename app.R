@@ -504,6 +504,9 @@ i18n <- list(
     spatial_ne_run    = "Neighbors enrichment を計算",
     spatial_ne_k      = "近傍数 k",
     spatial_ne_perm   = "並べ替え回数",
+    spatial_ne_stars  = "有意マーク(*)を表示",
+    spatial_ne_prog   = "Neighbors enrichment を計算中",
+    spatial_eta       = "%d/%d (残り約 %s)",
     spatial_ne_title  = "Neighbors enrichment z-score (正:隣接, 負:回避)",
     spatial_ne_help   = "squidpy の nhood_enrichment を参考にした指標です。各細胞の k 近傍で空間グラフを作り、クラスター間の隣接エッジ数を、ラベルをランダムに並べ替えた帰無分布と比較して z-score を計算します。正の値はそのクラスター対が予想より隣接、負の値は回避を意味します。z-score 行列をヒートマップで表示します(同一サンプル内のエッジのみ)。 有意なペアにアスタリスク(z→正規近似で両側p値→BH補正; *<0.05, **<0.01, ***<0.001)を表示します。行・列は階層クラスタリングで並べ替えます。",
     spatial_need_run  = "対象を選び「計算」ボタンを押してください。",
@@ -705,6 +708,9 @@ i18n <- list(
     spatial_ne_run    = "Compute neighbors enrichment",
     spatial_ne_k      = "Neighbors k",
     spatial_ne_perm   = "Permutations",
+    spatial_ne_stars  = "Show significance asterisks",
+    spatial_ne_prog   = "Computing neighbors enrichment",
+    spatial_eta       = "%d/%d (about %s left)",
     spatial_ne_title  = "Neighbors-enrichment z-score (positive: adjacent, negative: avoidance)",
     spatial_ne_help   = "Inspired by squidpy's nhood_enrichment. Builds a spatial kNN graph and compares the number of edges between each cluster pair to a permutation null (shuffled labels) as a z-score. Positive = that cluster pair is adjacent more than expected, negative = avoidance. Shown as a z-score matrix heatmap (within-sample edges only). Significant pairs are marked with asterisks (z -> two-sided p via normal approx -> BH; *<0.05, **<0.01, ***<0.001). Rows and columns are hierarchically clustered.",
     spatial_need_run  = "Select targets and click Compute.",
@@ -730,6 +736,7 @@ ui <- page_sidebar(
   ),
 
   # --- 計算中インジケータ（Shinyが計算中=html.shiny-busy のときCSSで表示）---
+  # 経過時間をライブ表示（JSで shiny-busy を監視してカウント）。
   tags$head(tags$style(HTML("
     #app-busy { display: none; position: fixed; top: 64px; right: 22px; z-index: 100000;
       background: rgba(33,37,41,0.94); color: #fff; padding: 9px 16px; border-radius: 8px;
@@ -738,7 +745,21 @@ ui <- page_sidebar(
   "))),
   tags$div(id = "app-busy",
     tags$span(class = "spinner-border spinner-border-sm", role = "status"),
-    tags$span("計算中… / Computing…")),
+    tags$span("計算中… / Computing…"),
+    tags$span(id = "app-busy-secs", style = "opacity:0.85;")),
+  tags$script(HTML("
+    (function(){
+      var t0=null, iv=null;
+      function fmt(s){ return s<60 ? s+'s' : Math.floor(s/60)+'m'+(s%60)+'s'; }
+      function tick(){ var el=document.getElementById('app-busy-secs');
+        if(el && t0!==null){ el.textContent='('+fmt(Math.round((Date.now()-t0)/1000))+')'; } }
+      new MutationObserver(function(){
+        var busy=document.documentElement.classList.contains('shiny-busy');
+        if(busy && iv===null){ t0=Date.now(); tick(); iv=setInterval(tick,500); }
+        else if(!busy && iv!==null){ clearInterval(iv); iv=null; t0=null; }
+      }).observe(document.documentElement, {attributes:true, attributeFilter:['class']});
+    })();
+  ")),
 
   # --- サイドバー ---
   sidebar = sidebar(
@@ -4192,11 +4213,14 @@ server <- function(input, output, session) {
     if (!data_loaded()) return(placeholder_ui())
     tagList(
       fluidRow(
-        column(4, numericInput("spatial_ne_k", t("spatial_ne_k"),
+        column(3, numericInput("spatial_ne_k", t("spatial_ne_k"),
                                value = isolate(input$spatial_ne_k) %||% 6, min = 2, max = 30, step = 1)),
-        column(4, numericInput("spatial_ne_perm", t("spatial_ne_perm"),
+        column(3, numericInput("spatial_ne_perm", t("spatial_ne_perm"),
                                value = isolate(input$spatial_ne_perm) %||% 100, min = 20, max = 1000, step = 20)),
-        column(4, div(style = "margin-top: 24px;",
+        column(3, div(style = "margin-top: 30px;",
+          checkboxInput("spatial_ne_stars", t("spatial_ne_stars"),
+                        value = isolate(input$spatial_ne_stars) %||% TRUE))),
+        column(3, div(style = "margin-top: 24px;",
           div(class = "d-flex align-items-center gap-2",
             actionButton("spatial_ne_run", t("spatial_ne_run"), class = "btn-primary btn-sm",
                          icon = icon("project-diagram")),
@@ -4242,11 +4266,22 @@ server <- function(input, output, session) {
     obs <- count_mat(labv)
     sm <- matrix(0, K, K); sm2 <- matrix(0, K, K)
     sample_idx <- split(seq_along(labv), sampv)
-    for (p in seq_len(nperm)) {
-      lp <- labv
-      for (idx in sample_idx) lp[idx] <- sample(labv[idx])   # サンプル内でシャッフル
-      cm <- count_mat(lp); sm <- sm + cm; sm2 <- sm2 + cm^2
-    }
+    # 並べ替えループ: 進捗バーに 残り時間の推定 を表示
+    fmt_sec <- function(s) if (s < 60) paste0(round(s), "s") else
+      paste0(s %/% 60, "m", round(s %% 60), "s")
+    withProgress(message = t("spatial_ne_prog"), value = 0, {
+      t0 <- Sys.time(); step <- max(1L, nperm %/% 50L)
+      for (p in seq_len(nperm)) {
+        lp <- labv
+        for (idx in sample_idx) lp[idx] <- sample(labv[idx])   # サンプル内でシャッフル
+        cm <- count_mat(lp); sm <- sm + cm; sm2 <- sm2 + cm^2
+        if (p %% step == 0 || p == nperm) {
+          el <- as.numeric(difftime(Sys.time(), t0, units = "secs"))
+          eta <- el / p * (nperm - p)
+          setProgress(p / nperm, detail = sprintf(t("spatial_eta"), p, nperm, fmt_sec(eta)))
+        }
+      }
+    })
     mu <- sm / nperm; sdv <- sqrt(pmax(0, sm2 / nperm - mu^2))
     z <- (obs - mu) / ifelse(sdv == 0, NA, sdv)
     dimnames(z) <- list(levs, levs)
@@ -4276,9 +4311,11 @@ server <- function(input, output, session) {
     df$tip <- paste0(df$a, " - ", df$b, "<br>z: ", round(df$z, 2),
                      "<br>padj: ", signif(df$padj, 2), " ", df$lab)
     lim <- max(abs(df$z), na.rm = TRUE)
-    ggplot(df, aes(x = a, y = b, fill = z, text = tip)) +
-      geom_tile(color = "white", linewidth = 0.2) +
-      geom_text(aes(label = lab), size = 3, color = "black", fontface = "bold") +
+    p <- ggplot(df, aes(x = a, y = b, fill = z, text = tip)) +
+      geom_tile(color = "white", linewidth = 0.2)
+    if (isTRUE(input$spatial_ne_stars %||% TRUE))
+      p <- p + geom_text(aes(label = lab), size = 3, color = "black", fontface = "bold")
+    p +
       scale_fill_gradient2(low = "#3C5488FF", mid = "white", high = "#DC0000FF",
                            midpoint = 0, limits = c(-lim, lim), name = "z") +
       labs(x = NULL, y = NULL, title = t("spatial_ne_title")) +
