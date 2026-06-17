@@ -481,6 +481,15 @@ i18n <- list(
     spatial_by_meta   = "メタデータ変数",
     spatial_by_gene   = "遺伝子発現",
     spatial_gene      = "遺伝子",
+    spatial_highlight = "強調・近傍解析の対象クラスター (複数選択可)",
+    spatial_map       = "マップ",
+    spatial_nbr       = "近傍距離",
+    spatial_nbr_need  = "メタデータ(カテゴリ)で色分けし、対象クラスターを選択してください。",
+    spatial_nbr_x     = "距離 (最近接、log scale)",
+    spatial_nbr_y     = "対象細胞の累積割合",
+    spatial_nbr_title = "%s から各クラスターへの最近接距離 (近いほど左)",
+    spatial_nbr_run   = "近傍解析を実行",
+    spatial_nbr_help  = "対象クラスターの各細胞から、他クラスターの最も近い細胞までの距離を計算し、その累積分布(ECDF)を描きます。曲線が左にあるほどそのクラスターは対象クラスターの近くに位置します(y=0.5が距離の中央値)。同一サンプル内でのみ距離を計算します。",
 
     # プレースホルダ
     placeholder_load  = "\U0001F4C2 RDSファイルを選択して「読み込む」ボタンを押してください",
@@ -656,6 +665,15 @@ i18n <- list(
     spatial_by_meta   = "Metadata variable",
     spatial_by_gene   = "Gene expression",
     spatial_gene      = "Gene",
+    spatial_highlight = "Target clusters (highlight + neighborhood, multi-select)",
+    spatial_map       = "Map",
+    spatial_nbr       = "Neighborhood",
+    spatial_nbr_need  = "Color by a categorical metadata variable and select target clusters.",
+    spatial_nbr_x     = "Distance (nearest, log scale)",
+    spatial_nbr_y     = "Cumulative fraction of target cells",
+    spatial_nbr_title = "Nearest-neighbor distance from %s to each cluster (closer = left)",
+    spatial_nbr_run   = "Run neighborhood analysis",
+    spatial_nbr_help  = "For each cell of a target cluster, computes the distance to the nearest cell of every other cluster and draws the cumulative distribution (ECDF). A curve further to the left means that cluster sits closer to the target (y=0.5 is the median distance). Distances are computed within the same sample only.",
 
     # Placeholders
     placeholder_load  = "\U0001F4C2 Select an RDS file and click 'Load'",
@@ -3548,10 +3566,33 @@ server <- function(input, output, session) {
         if (!is.null(spatial_seg())) {
           checkboxInput("spatial_use_seg", t("spatial_seg"),
                         value = isolate(input$spatial_use_seg) %||% TRUE)
-        }
+        },
+        # 強調・近傍解析の対象クラスター（メタデータ・カテゴリ色分け時のみ）
+        conditionalPanel("input.spatial_by == 'meta'",
+          uiOutput("spatial_highlight_ui"))
       )),
-      uiOutput("spatial_plot_ui")
+      navset_card_tab(
+        id = "spatial_subtab",
+        nav_panel(title = "\U0001F5FA️ Map", value = "map",
+                  card_body(class = "p-2", uiOutput("spatial_plot_ui"))),
+        nav_panel(title = "\U0001F4CF Neighborhood", value = "nbr",
+                  card_body(class = "p-2", uiOutput("spatial_nbr_ui")))
+      )
     )
+  })
+
+  # 対象クラスター選択UI（現在の色分け変数のレベル＝カテゴリ時のみ）
+  output$spatial_highlight_ui <- renderUI({
+    obj <- spatial_obj(); req(obj)
+    cv <- input$spatial_color
+    if (identical(input$spatial_by, "gene") || is.null(cv) || !(cv %in% names(obj@meta.data))) return(NULL)
+    v <- obj@meta.data[[cv]]
+    if (!(is.factor(v) || is.character(v) || (is.numeric(v) && length(unique(v)) <= 50))) return(NULL)
+    levs <- cluster_level_order(v)
+    prev <- isolate(input$spatial_highlight)
+    sel <- if (!is.null(prev)) prev[prev %in% levs] else NULL
+    selectizeInput("spatial_highlight", t("spatial_highlight"), choices = levs, selected = sel,
+                   multiple = TRUE, options = list(plugins = list("remove_button")))
   })
 
   # サンプル選択UI（サンプル列に追従。複数選択可）
@@ -3673,6 +3714,11 @@ server <- function(input, output, session) {
         levs <- levels(df$col)
         disc_pal <- if (!is.null(lin)) lin[levs] else
           setNames(scales::hue_pal()(length(levs)), levs)
+        # 強調: 選択クラスター以外を灰色にして対象を目立たせる
+        hl <- input$spatial_highlight
+        if (!is.null(hl) && length(hl) > 0) {
+          disc_pal[!(names(disc_pal) %in% hl)] <- "#D9D9D9"
+        }
       }
       showleg <- !(pr$is_cat && nlevels(df$col) > 30)
       samples <- if (pr$facet) sort(unique(df$sample)) else NA
@@ -3750,6 +3796,111 @@ server <- function(input, output, session) {
     if (facet) p <- p + facet_wrap(~ sample)
     p
   }, bg = "transparent")
+
+  # ==========================================================================
+  # Spatial: 近傍距離（対象クラスター → 他クラスターへの最近接距離 ECDF）
+  # ==========================================================================
+  output$spatial_nbr_ui <- renderUI({
+    lang <- input$lang
+    if (!data_loaded()) return(placeholder_ui())
+    tagList(
+      div(class = "d-flex align-items-center gap-2 mb-2",
+        actionButton("spatial_nbr_run", t("spatial_nbr_run"),
+                     class = "btn-primary btn-sm", icon = icon("ruler")),
+        bslib::tooltip(tags$span(icon("circle-question"), style = "cursor: help;"),
+                       t("spatial_nbr_help"), placement = "right")),
+      if (requireNamespace("plotly", quietly = TRUE)) {
+        plotly::plotlyOutput("spatial_nbr_plot", height = act_h(), width = act_w())
+      } else plotOutput("spatial_nbr_plot_static", height = act_h(), width = act_w())
+    )
+  })
+
+  # 対象細胞群から他クラスター細胞群への最近接距離（同一サンプル内）
+  nn_dist_anchor_to_b <- function(df, aCells, bCells) {
+    ds <- numeric(0)
+    for (smp in unique(df$sample)) {
+      a <- df[df$cell %in% aCells & df$sample == smp, c("x", "y"), drop = FALSE]
+      b <- df[df$cell %in% bCells & df$sample == smp, c("x", "y"), drop = FALSE]
+      if (nrow(a) == 0 || nrow(b) == 0) next
+      nn <- tryCatch(FNN::get.knnx(as.matrix(b), as.matrix(a), k = 1)$nn.dist[, 1],
+                     error = function(e) NULL)
+      if (is.null(nn)) {
+        nn <- apply(as.matrix(a), 1, function(p)
+          sqrt(min(colSums((t(as.matrix(b)) - p)^2))))
+      }
+      ds <- c(ds, nn)
+    }
+    ds
+  }
+
+  spatial_nbr_obj <- eventReactive(input$spatial_nbr_run, {
+    pr <- spatial_prep()
+    validate(need(pr$is_cat, t("spatial_nbr_need")))
+    anchors <- input$spatial_highlight
+    validate(need(length(anchors) > 0, t("spatial_nbr_need")))
+    df <- pr$df
+    if (is.null(df$sample)) df$sample <- "all"
+    levs <- levels(df$col)
+    rows <- list()
+    for (A in anchors) {
+      aCells <- df$cell[as.character(df$col) == A]
+      if (length(aCells) < 3) next
+      if (length(aCells) > 3000) aCells <- sample(aCells, 3000)   # 高速化のため間引き
+      others <- setdiff(levs, A)
+      res <- lapply(others, function(B) {
+        bCells <- df$cell[as.character(df$col) == B]
+        if (length(bCells) < 3) return(NULL)
+        ds <- nn_dist_anchor_to_b(df, aCells, bCells)
+        ds <- ds[is.finite(ds) & ds > 0]
+        if (length(ds) < 3) return(NULL)
+        probs <- seq(0.02, 1, length.out = 100)
+        data.frame(anchor = A, cluster = B,
+                   dist = as.numeric(stats::quantile(ds, probs)),
+                   frac = probs, med = stats::median(ds), stringsAsFactors = FALSE)
+      })
+      res <- Filter(Negate(is.null), res)
+      if (!length(res)) next
+      # 線が多すぎる場合は中央値が近い順に最大40クラスターに絞る
+      meds <- vapply(res, function(r) r$med[1], numeric(1))
+      keep <- order(meds)[seq_len(min(40, length(res)))]
+      rows <- c(rows, res[keep])
+    }
+    validate(need(length(rows) > 0, t("spatial_nbr_need")))
+    do.call(rbind, rows)
+  }, ignoreInit = TRUE)
+
+  spatial_nbr_ggplot <- reactive({
+    d <- spatial_nbr_obj(); req(d)
+    pt <- plot_theme()
+    d$cluster <- factor(d$cluster, levels = cluster_level_order(unique(d$cluster)))
+    d$tip <- paste0(d$cluster, "<br>", t("spatial_nbr_x"), ": ", round(d$dist, 1),
+                    "<br>", t("spatial_nbr_y"), ": ", round(d$frac, 2))
+    p <- ggplot(d, aes(x = dist, y = frac, color = cluster, group = cluster, text = tip)) +
+      geom_line(linewidth = 0.6) +
+      scale_x_log10() +
+      labs(x = t("spatial_nbr_x"), y = t("spatial_nbr_y"), color = NULL) +
+      theme_minimal(base_size = 12) +
+      theme(
+        plot.background = element_rect(fill = pt$bg, color = NA),
+        panel.background = element_rect(fill = pt$bg, color = NA),
+        panel.grid.minor = element_blank(),
+        text = element_text(color = pt$fg),
+        axis.text = element_text(color = pt$fg2),
+        legend.text = element_text(color = pt$fg),
+        strip.text = element_text(color = pt$fg, face = "bold"))
+    lin <- lineage_colors_or_null(levels(d$cluster))
+    if (!is.null(lin)) p <- p + scale_color_manual(values = lin)
+    if (length(unique(d$anchor)) > 1) p <- p + facet_wrap(~ anchor)
+    else p <- p + ggtitle(sprintf(t("spatial_nbr_title"), unique(d$anchor)))
+    p
+  })
+
+  if (requireNamespace("plotly", quietly = TRUE)) {
+    output$spatial_nbr_plot <- plotly::renderPlotly({
+      plotly::ggplotly(spatial_nbr_ggplot(), tooltip = "text")
+    })
+  }
+  output$spatial_nbr_plot_static <- renderPlot({ spatial_nbr_ggplot() }, bg = "transparent")
 }
 
 # --- アプリ実行 ---

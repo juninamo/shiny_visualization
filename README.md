@@ -17,7 +17,7 @@ feature immediately.
 | 🎻 **Expression** | One tab with shared **gene** and **group-variable** controls and three inner sub-tabs: **Violin** (gene across groups), **Feature UMAP** (gene on the embedding), and **Group UMAP** (embedding colored by a metadata column; hover a point to see its cluster). |
 | 📊 **DEG / GSEA** | Differential expression (`FindMarkers`) with a Volcano plot and a searchable table. Supports **categorical** comparisons (Group 1 vs one **or multiple** control groups, or "all others") and **numeric** comparisons (Top X% vs Bottom X% of a continuous score). The tested **genes** can be restricted to *all genes*, a *marker set*, a *set + your own genes*, or *only your own genes*. One click sends the significant **up- or down-DEGs to Enrichr** and opens the results. An inner **GSEA** sub-tab runs `fgsea` against **MSigDB** collections (`msigdbr`) using the **same DEG result** (genes ranked by avg_log2FC), with a top-pathways NES bar plot and a sortable table. |
 | 🧱 **Composition** | Stacked proportion bar plot (e.g. cluster composition per donor), with optional **nested faceting** by additional variables (e.g. `site` + `study`). |
-| 🗺️ **Spatial** | Plot cells at their tissue x/y coordinates, colored by any metadata variable (categorical → lineage palette, numeric → viridis) **or by a single gene's expression** (viridis), with a **sample** picker to focus on / facet specific tissue sections. If the object has **segmentation** (cell-boundary polygons in @images), a toggle draws filled cell shapes instead of points. Pick which loaded dataset to plot from the sidebar. Works on objects that keep coordinates in meta.data (x/y) or in @images. |
+| 🗺️ **Spatial** | Plot cells at their tissue x/y coordinates, colored by any metadata variable (categorical → lineage palette, numeric → viridis) **or by a single gene's expression** (viridis), with a **sample** picker to focus on / facet specific tissue sections. If the object has **segmentation** (cell-boundary polygons in @images), a toggle draws filled cell shapes instead of points. You can **highlight selected clusters** (others greyed) and, in a **Neighborhood** sub-tab, plot the nearest-neighbor distance ECDF from the selected clusters to every other cluster (x = distance, log scale; y = cumulative fraction) — closer clusters' curves sit further left; hover a line to see which cluster. Pick which loaded dataset to plot from the sidebar. Works on objects that keep coordinates in meta.data (x/y) or in @images. |
 | 🔥 **Heatmap / Dot** | One tab with shared gene/cluster controls and three inner sub-tabs: a **Heatmap** (mean-expression, optional per-gene Z-scoring and row/column clustering) and a **Dot Plot** (dot size = % expressing, color = scaled mean, optional marker-group facets), and a **Sub-cluster** sub-tab for iterative drill-down (re-cluster selected clusters into nested names, then re-plot + re-correlate vs the reference). With a reference, both plots have a **Combine** mode; the Dot Plot's combine also outputs a **correspondence table** (each active cluster → nearest reference by expression correlation, with a confidence *margin*) that you can **download as CSV**. |
 
 ### Highlights
@@ -74,7 +74,7 @@ feature immediately.
 
 ```r
 install.packages(c("shiny", "bslib", "ggplot2", "DT", "ggrepel",
-                   "ggh4x", "plotly", "patchwork",
+                   "ggh4x", "plotly", "patchwork", "FNN",
                    "msigdbr", "httr", "jsonlite"))
 # Seurat (and its dependency Matrix):
 install.packages("Seurat")
