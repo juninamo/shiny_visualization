@@ -1108,7 +1108,8 @@ server <- function(input, output, session) {
               column(12,
                 selectInput("deg_marker_set", t("deg_marker_set"),
                             choices = names(marker_sets),
-                            selected = isolate(input$deg_marker_set) %||% names(marker_sets)[1])
+                            selected = isolate(input$deg_marker_set) %||% names(marker_sets)[1],
+                            multiple = TRUE)
               )
             )
           ),
@@ -1169,8 +1170,10 @@ server <- function(input, output, session) {
     obj <- seurat_obj()
     req(obj)
     set_genes <- character(0)
-    if (mode %in% c("set", "set_custom") && !is.null(input$deg_marker_set)) {
-      set_genes <- unique(marker_set_to_df(marker_sets[[input$deg_marker_set]])$feature)
+    if (mode %in% c("set", "set_custom") && length(input$deg_marker_set) > 0) {
+      sets_present <- input$deg_marker_set[input$deg_marker_set %in% names(marker_sets)]
+      set_genes <- unique(do.call(c, lapply(sets_present,
+        function(s) marker_set_to_df(marker_sets[[s]])$feature)))
     }
     custom <- if (mode %in% c("custom", "set_custom")) input$deg_custom_genes else character(0)
     intersect(unique(c(set_genes, custom)), rownames(obj))
@@ -1930,7 +1933,7 @@ server <- function(input, output, session) {
       cat_cols[1]
     }
     cur_set <- isolate(input[[paste0(prefix, "_set")]])
-    set_sel <- if (!is.null(cur_set) && cur_set %in% names(marker_sets)) {
+    set_sel <- if (!is.null(cur_set) && length(cur_set) > 0 && all(cur_set %in% names(marker_sets))) {
       cur_set
     } else {
       names(marker_sets)[1]
@@ -1959,7 +1962,7 @@ server <- function(input, output, session) {
           sprintf("input.%s == 'set' || input.%s == 'set_custom'", id_mode, id_mode),
           fluidRow(column(12,
             selectInput(id_set, t("marker_set"),
-                        choices = names(marker_sets), selected = set_sel)
+                        choices = names(marker_sets), selected = set_sel, multiple = TRUE)
           )),
           # セット内の遺伝子（不要なものを削除可能）
           uiOutput(paste0(prefix, "_set_genes_ui"))
@@ -1989,7 +1992,7 @@ server <- function(input, output, session) {
         ),
         column(6,
           selectInput(id_set, t("marker_set"),
-                      choices = names(marker_sets), selected = set_sel)
+                      choices = names(marker_sets), selected = set_sel, multiple = TRUE)
         )
       )
     }
@@ -2014,14 +2017,17 @@ server <- function(input, output, session) {
   # --- マーカー描画用の (feature, group) を解決（セット / セット+カスタム / カスタムのみ） ---
   resolve_marker_set_df <- function(prefix) {
     mode <- input[[paste0(prefix, "_feature_mode")]] %||% "set"
-    setn <- input[[paste0(prefix, "_set")]]
+    setn <- input[[paste0(prefix, "_set")]]   # 複数セット可
     parts <- list()
-    if (mode %in% c("set", "set_custom") && !is.null(setn)) {
-      sdf <- marker_set_to_df(marker_sets[[setn]])
-      # ユーザーがセット内から削除した遺伝子を反映（kept が NULL のときは全て）
-      kept <- input[[paste0(prefix, "_set_genes")]]
-      if (!is.null(kept)) sdf <- sdf[sdf$feature %in% kept, , drop = FALSE]
-      parts[[length(parts) + 1]] <- sdf
+    if (mode %in% c("set", "set_custom") && length(setn) > 0) {
+      sets_present <- setn[setn %in% names(marker_sets)]
+      if (length(sets_present) > 0) {
+        sdf <- do.call(rbind, lapply(sets_present, function(s) marker_set_to_df(marker_sets[[s]])))
+        # ユーザーがセット内から削除した遺伝子を反映（kept が NULL のときは全て）
+        kept <- input[[paste0(prefix, "_set_genes")]]
+        if (!is.null(kept)) sdf <- sdf[sdf$feature %in% kept, , drop = FALSE]
+        parts[[length(parts) + 1]] <- sdf
+      }
     }
     if (mode %in% c("custom", "set_custom")) {
       cg <- input[[paste0(prefix, "_custom_genes")]]
@@ -2047,8 +2053,9 @@ server <- function(input, output, session) {
   # セットを変えると新しいセットの全遺伝子で再初期化される。
   set_genes_select_ui <- function(prefix) {
     setn <- input[[paste0(prefix, "_set")]]
-    if (is.null(setn) || !(setn %in% names(marker_sets))) return(NULL)
-    all_genes <- unique(marker_set_to_df(marker_sets[[setn]])$feature)
+    setn <- setn[setn %in% names(marker_sets)]
+    if (length(setn) == 0) return(NULL)
+    all_genes <- unique(do.call(c, lapply(setn, function(s) marker_set_to_df(marker_sets[[s]])$feature)))
     id_sel <- paste0(prefix, "_set_genes")
     prev <- isolate(input[[id_sel]])
     sel <- if (!is.null(prev) && length(prev) > 0 && all(prev %in% all_genes)) prev else all_genes
