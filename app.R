@@ -539,19 +539,26 @@ i18n <- list(
     spatial_ne_title  = "Neighbors enrichment z-score (正:隣接, 負:回避)",
     spatial_ne_help   = "squidpy の nhood_enrichment を参考にした指標です。各細胞の k 近傍で空間グラフを作り、クラスター間の隣接エッジ数を、ラベルをランダムに並べ替えた帰無分布と比較して z-score を計算します。正の値はそのクラスター対が予想より隣接、負の値は回避を意味します。z-score 行列をヒートマップで表示します(同一サンプル内のエッジのみ)。 有意なペアにアスタリスク(z→正規近似で両側p値→BH補正; *<0.05, **<0.01, ***<0.001)を表示します。行・列は階層クラスタリングで並べ替えます。",
     spatial_need_run  = "対象を選び「計算」ボタンを押してください。",
-    az_settings       = "Azimuth アノテーション設定",
-    az_ref            = "リファレンス (Pan-Human Azimuth のフォルダ)",
-    az_ref_none       = "Azimuthリファレンス(idx.annoyを含むフォルダ)が見つかりません。Pan-Human Azimuthをダウンロードしてアプリのフォルダに置いてください。",
-    az_run            = "Azimuth を実行",
-    az_running        = "Azimuth でアノテーション中... (時間がかかります)",
+    az_settings       = "Pan-Human Azimuth (CloudAzimuth) アノテーション",
+    az_run            = "CloudAzimuth を実行",
+    az_running        = "CloudAzimuth でアノテーション中... (クラウドで計算、時間がかかります)",
     az_done           = "✅ アノテーション完了: %d 細胞",
-    az_missing        = "Azimuth パッケージが必要です: remotes::install_github('satijalab/azimuth')",
+    az_missing        = "AzimuthAPI パッケージが必要です: devtools::install_github('satijalab/AzimuthAPI')",
+    az_cloud_note     = "⚠️ CloudAzimuth は発現データを satijalab のクラウドサーバー (azimuthapi.satijalab.org) に送信して計算します。",
     az_level          = "表示するアノテーション階層",
-    az_placeholder    = "リファレンスを選び「Azimuth を実行」を押してください",
+    az_placeholder    = "「CloudAzimuth を実行」を押してください",
     az_dl             = "アノテーション(細胞→ラベル)をCSVで保存",
     az_score          = "予測スコア",
     az_count          = "細胞数",
-    az_help           = "Azimuth (satijalab) で、選択したリファレンス(例: Pan-Human Azimuth)へ参照マッピングし、各細胞の細胞型を自動アノテーションします。リファレンスは idx.annoy と ref.Rds を含むフォルダで、Azimuthのサイト等からダウンロードしてアプリのフォルダに置いてください。実行後、予測ラベルのUMAP・集計表・CSV出力が利用できます。",
+    az_help           = "Pan-Human Azimuth の CloudAzimuth (AzimuthAPI) で各細胞を自動アノテーションします。発現データはクラウドサーバーに送信され、broad/medium/fine 等の細胞型ラベルが付与されます。実行後、予測ラベルのUMAP・集計表・CSV、および 既存クラスターとの対応表(ヒートマップ+CSV) が利用できます。",
+    az_corr_title     = "クラスター × Azimuth アノテーション 対応表",
+    az_corr_cluster   = "クラスター列 (メタデータ)",
+    az_corr_norm      = "正規化",
+    az_corr_norm_row  = "クラスターごと (行=1)",
+    az_corr_norm_col  = "Azimuthごと (列=1)",
+    az_corr_norm_none = "細胞数 (生)",
+    az_corr_dl        = "対応表をCSVで保存",
+    az_corr_help      = "選んだメタデータのクラスター列と Azimuth アノテーションのクロス集計です。各セルは細胞数(または行/列で正規化した割合)。行・列は階層クラスタリングで並べ替えます。",
 
     # プレースホルダ
     placeholder_load  = "\U0001F4C2 RDSファイルを選択して「読み込む」ボタンを押してください",
@@ -757,19 +764,26 @@ i18n <- list(
     spatial_ne_title  = "Neighbors-enrichment z-score (positive: adjacent, negative: avoidance)",
     spatial_ne_help   = "Inspired by squidpy's nhood_enrichment. Builds a spatial kNN graph and compares the number of edges between each cluster pair to a permutation null (shuffled labels) as a z-score. Positive = that cluster pair is adjacent more than expected, negative = avoidance. Shown as a z-score matrix heatmap (within-sample edges only). Significant pairs are marked with asterisks (z -> two-sided p via normal approx -> BH; *<0.05, **<0.01, ***<0.001). Rows and columns are hierarchically clustered.",
     spatial_need_run  = "Select targets and click Compute.",
-    az_settings       = "Azimuth annotation settings",
-    az_ref            = "Reference (Pan-Human Azimuth folder)",
-    az_ref_none       = "No Azimuth reference (a folder containing idx.annoy) found. Download Pan-Human Azimuth and place it in the app folder.",
-    az_run            = "Run Azimuth",
-    az_running        = "Annotating with Azimuth... (this can take a while)",
+    az_settings       = "Pan-Human Azimuth (CloudAzimuth) annotation",
+    az_run            = "Run CloudAzimuth",
+    az_running        = "Annotating with CloudAzimuth... (cloud computation, can take a while)",
     az_done           = "✅ Annotation complete: %d cells",
-    az_missing        = "The Azimuth package is required: remotes::install_github('satijalab/azimuth')",
+    az_missing        = "The AzimuthAPI package is required: devtools::install_github('satijalab/AzimuthAPI')",
+    az_cloud_note     = "⚠️ CloudAzimuth sends your expression data to the satijalab cloud server (azimuthapi.satijalab.org) for computation.",
     az_level          = "Annotation level to show",
-    az_placeholder    = "Pick a reference and click Run Azimuth",
+    az_placeholder    = "Click Run CloudAzimuth",
     az_dl             = "Download annotation (cell→label) CSV",
     az_score          = "Prediction score",
     az_count          = "Cells",
-    az_help           = "Uses Azimuth (satijalab) to reference-map onto a chosen reference (e.g. Pan-Human Azimuth) and automatically annotate each cell's type. The reference is a folder containing idx.annoy and ref.Rds — download it from the Azimuth website and place it in the app folder. After running you get a UMAP of predicted labels, a summary table, and a CSV export.",
+    az_help           = "Annotates each cell with Pan-Human Azimuth via CloudAzimuth (AzimuthAPI). Expression data is sent to the cloud server and broad/medium/fine cell-type labels are returned. After running you get a UMAP of predicted labels, a summary table, a CSV, and a correspondence table (heatmap + CSV) against your existing clusters.",
+    az_corr_title     = "Cluster × Azimuth annotation correspondence",
+    az_corr_cluster   = "Cluster column (metadata)",
+    az_corr_norm      = "Normalization",
+    az_corr_norm_row  = "Per cluster (row = 1)",
+    az_corr_norm_col  = "Per Azimuth (col = 1)",
+    az_corr_norm_none = "Cell counts (raw)",
+    az_corr_dl        = "Download correspondence CSV",
+    az_corr_help      = "Cross-tabulation of the chosen metadata cluster column and the Azimuth annotation. Each cell is the cell count (or a row/column-normalized proportion). Rows and columns are hierarchically clustered.",
 
     # Placeholders
     placeholder_load  = "\U0001F4C2 Select an RDS file and click 'Load'",
@@ -1077,6 +1091,23 @@ server <- function(input, output, session) {
     sel <- isolate(input$spatial_gene); if (is.null(sel) || !(sel %in% genes)) sel <- genes[1]
     updateSelectizeInput(session, "spatial_gene", choices = genes, selected = sel, server = TRUE)
   })
+  # カスタム遺伝子選択(mk_custom_genes / deg_custom_genes)もサーバーサイドで投入
+  observe({
+    if (!isTRUE(data_loaded())) return()
+    input$lang; input$mk_feature_mode
+    if (!identical(input$main_tabs, "markers")) return()
+    obj <- seurat_obj(); if (is.null(obj)) return()
+    updateSelectizeInput(session, "mk_custom_genes", choices = sort(rownames(obj)),
+                         selected = isolate(input$mk_custom_genes), server = TRUE)
+  })
+  observe({
+    if (!isTRUE(data_loaded())) return()
+    input$lang; input$deg_feature_mode
+    if (!identical(input$main_tabs, "deg")) return()
+    obj <- seurat_obj(); if (is.null(obj)) return()
+    updateSelectizeInput(session, "deg_custom_genes", choices = sort(rownames(obj)),
+                         selected = isolate(input$deg_custom_genes), server = TRUE)
+  })
 
   output$external_links_ui <- renderUI({
     req(input$gene)
@@ -1280,7 +1311,7 @@ server <- function(input, output, session) {
             fluidRow(
               column(12,
                 selectizeInput("deg_custom_genes", t("deg_custom_genes"),
-                               choices = deg_gene_choices,
+                               choices = isolate(input$deg_custom_genes),   # サーバーサイドで投入
                                selected = isolate(input$deg_custom_genes),
                                multiple = TRUE,
                                options = list(placeholder = t("gene_placeholder"),
@@ -2058,7 +2089,7 @@ server <- function(input, output, session) {
       p <- build_comp(obj, interactive = TRUE, fill_var = fill_var,
                       clusters_sel = clusters_sel, x_var = x_var)
       if (!is.null(title)) p <- p + ggtitle(title)
-      gp <- plotly::ggplotly(p, tooltip = "text")
+      gp <- suppressWarnings(plotly::ggplotly(p, tooltip = "text"))
       # スタックは factor 反転で上端=系統先頭。凡例も系統先頭が上に来るよう反転。
       plotly::layout(gp, legend = list(traceorder = "reversed"))
     }
@@ -2136,7 +2167,7 @@ server <- function(input, output, session) {
           sprintf("input.%s == 'custom' || input.%s == 'set_custom'", id_mode, id_mode),
           fluidRow(column(12,
             selectizeInput(id_custom, t("mk_custom_genes"),
-                           choices = gene_choices,
+                           choices = isolate(input[[id_custom]]),   # サーバーサイドで投入
                            selected = isolate(input[[id_custom]]),
                            multiple = TRUE,
                            options = list(placeholder = t("gene_placeholder"),
@@ -3149,7 +3180,7 @@ server <- function(input, output, session) {
     }
     # ggplotly はサイズ凡例を落とすため、ダミーの凡例マーカーを追加する
     dot_to_plotly <- function(p, dot_scale) {
-      gp <- plotly::plotly_build(plotly::ggplotly(p, tooltip = "text"))
+      gp <- suppressWarnings(plotly::plotly_build(plotly::ggplotly(p, tooltip = "text")))
       gp <- adjust_facet_widths(gp, p)
       breaks <- c(25, 50, 75, 100)
       sizes <- tryCatch(dot_size_px(breaks, dot_scale), error = function(e) NULL)
@@ -3425,7 +3456,7 @@ server <- function(input, output, session) {
     output$volcano_plotly <- plotly::renderPlotly({
       req(deg_results())
       p <- build_volcano(interactive = TRUE)
-      gp <- plotly::ggplotly(p, tooltip = "text")
+      gp <- suppressWarnings(plotly::ggplotly(p, tooltip = "text"))
       bg <- plot_theme()$bg
       plotly::layout(gp, paper_bgcolor = bg, plot_bgcolor = bg)
     })
@@ -4186,10 +4217,10 @@ server <- function(input, output, session) {
   })
   if (requireNamespace("plotly", quietly = TRUE)) {
     output$spatial_nbr_plot <- plotly::renderPlotly({
-      plotly::ggplotly(spatial_nbr_ggplot(), tooltip = "text")
+      suppressWarnings(plotly::ggplotly(spatial_nbr_ggplot(), tooltip = "text"))
     })
   }
-  output$spatial_nbr_plot_static <- renderPlot({ spatial_nbr_ggplot() }, bg = "transparent")
+  output$spatial_nbr_plot_static <- renderPlot({ suppressWarnings(print(spatial_nbr_ggplot())) }, bg = "transparent")
 
   # ==========================================================================
   # Spatial: Co-occurrence probability（squidpy 参考）
@@ -4279,10 +4310,10 @@ server <- function(input, output, session) {
   })
   if (requireNamespace("plotly", quietly = TRUE)) {
     output$spatial_co_plot <- plotly::renderPlotly({
-      plotly::ggplotly(spatial_co_ggplot(), tooltip = "text")
+      suppressWarnings(plotly::ggplotly(spatial_co_ggplot(), tooltip = "text"))
     })
   }
-  output$spatial_co_plot_static <- renderPlot({ spatial_co_ggplot() }, bg = "transparent")
+  output$spatial_co_plot_static <- renderPlot({ suppressWarnings(print(spatial_co_ggplot())) }, bg = "transparent")
 
   # ==========================================================================
   # Spatial: Neighbors enrichment（squidpy 参考、置換 z-score）
@@ -4425,81 +4456,65 @@ server <- function(input, output, session) {
   })
   if (requireNamespace("plotly", quietly = TRUE)) {
     output$spatial_ne_plot <- plotly::renderPlotly({
-      plotly::ggplotly(spatial_ne_ggplot(), tooltip = "text")
+      suppressWarnings(plotly::ggplotly(spatial_ne_ggplot(), tooltip = "text"))
     })
   }
   output$spatial_ne_plot_static <- renderPlot({ spatial_ne_ggplot() }, bg = "transparent")
 
   # ==========================================================================
-  # Azimuth による自動アノテーション（Pan-Human など）
+  # Pan-Human Azimuth (CloudAzimuth) による自動アノテーション
   # ==========================================================================
-  # app_dir 以下から Azimuth リファレンス(= idx.annoy を含むフォルダ)を探す
-  azimuth_refs <- reactive({
-    input$load_btn   # 読み込み後に再評価
-    dirs <- list.dirs(app_dir, recursive = TRUE, full.names = TRUE)
-    refs <- dirs[file.exists(file.path(dirs, "idx.annoy"))]
-    setNames(refs, basename(refs))
-  })
-
   azimuth_obj <- reactiveVal(NULL)
 
   output$azimuth_panel_ui <- renderUI({
     lang <- input$lang
     if (!data_loaded()) return(placeholder_ui())
-    if (!requireNamespace("Azimuth", quietly = TRUE)) {
+    if (!requireNamespace("AzimuthAPI", quietly = TRUE)) {
       return(div(class = "text-center text-warning py-4", h5(t("az_missing"))))
-    }
-    refs <- azimuth_refs()
-    ref_ui <- if (length(refs) == 0) {
-      div(class = "alert alert-warning py-2 small", icon("triangle-exclamation"), " ", t("az_ref_none"))
-    } else {
-      sel <- isolate(input$az_ref)
-      # Pan-Human 系を優先選択
-      ph <- names(refs)[grepl("pan.?human|panhuman", names(refs), ignore.case = TRUE)]
-      if (is.null(sel) || !(sel %in% refs)) sel <- if (length(ph) > 0) refs[[ph[1]]] else refs[[1]]
-      selectInput("az_ref", t("az_ref"), choices = refs, selected = sel)
     }
     tagList(
       div(class = "alert alert-secondary py-2 small mb-2", icon("circle-info"), " ", t("az_help")),
       div(class = "card mb-3", div(class = "card-body",
         h6(t("az_settings"), class = "card-title text-primary"),
-        ref_ui,
+        div(class = "alert alert-warning py-2 small", t("az_cloud_note")),
         actionButton("az_run", t("az_run"), class = "btn-primary",
-                     icon = icon("wand-magic-sparkles"))
+                     icon = icon("cloud-arrow-up"))
       )),
       uiOutput("azimuth_results_ui")
     )
   })
 
   observeEvent(input$az_run, {
-    req(seurat_obj(), input$az_ref)
-    if (!requireNamespace("Azimuth", quietly = TRUE)) {
+    req(seurat_obj())
+    if (!requireNamespace("AzimuthAPI", quietly = TRUE)) {
       showNotification(t("az_missing"), type = "error"); return()
-    }
-    if (!dir.exists(input$az_ref) || !file.exists(file.path(input$az_ref, "idx.annoy"))) {
-      showNotification(t("az_ref_none"), type = "error"); return()
     }
     withProgress(message = t("az_running"), value = NULL, {
       tryCatch({
         obj <- seurat_obj()
-        # v5 のマルチレイヤーは Azimuth 前に結合
+        # v5 のマルチレイヤーは結合し、正規化(data)を用意
         if (requireNamespace("SeuratObject", quietly = TRUE)) {
           obj <- tryCatch(SeuratObject::JoinLayers(obj), error = function(e) obj)
         }
-        res <- Azimuth::RunAzimuth(obj, reference = input$az_ref)
+        if (!("data" %in% tryCatch(SeuratObject::Layers(obj, assay = DefaultAssay(obj)),
+                                   error = function(e) character(0)))) {
+          obj <- NormalizeData(obj, verbose = FALSE)
+        }
+        res <- AzimuthAPI::CloudAzimuth(obj, assay = DefaultAssay(obj))
         azimuth_obj(res)
         showNotification(sprintf(t("az_done"), ncol(res)), type = "message", duration = 6)
       }, error = function(e) {
-        showNotification(paste(t("notify_error"), conditionMessage(e)), type = "error", duration = 10)
+        showNotification(paste(t("notify_error"), conditionMessage(e)), type = "error", duration = 12)
       })
     })
   })
 
-  # Azimuth が付与した予測ラベル列（predicted.* で .score を除く）
+  # CloudAzimuth が付与する表示可能なラベル列
   azimuth_levels <- reactive({
     res <- azimuth_obj(); if (is.null(res)) return(character(0))
-    cols <- grep("^predicted\\.", names(res@meta.data), value = TRUE)
-    cols[!grepl("\\.score$", cols)]
+    cand <- c("azimuth_broad", "azimuth_medium", "azimuth_fine", "azimuth_label",
+              "final_level_labels", "full_hierarchical_labels")
+    cand[cand %in% names(res@meta.data)]
   })
 
   output$azimuth_results_ui <- renderUI({
@@ -4507,49 +4522,70 @@ server <- function(input, output, session) {
       return(div(class = "text-center text-muted py-4", h5(t("az_placeholder"))))
     }
     levs <- azimuth_levels()
+    # 対応表に使えるクラスター列 = 元データのカテゴリ列
+    cat_cols <- meta_col_types()$cat
+    clu_sel <- if ("seurat_clusters" %in% cat_cols) "seurat_clusters"
+               else if (length(cat_cols) > 0) cat_cols[1] else NULL
     tagList(
       fluidRow(
         column(6, selectInput("az_level", t("az_level"), choices = levs,
-                              selected = isolate(input$az_level) %||% levs[length(levs)])),
+                              selected = isolate(input$az_level) %||% levs[min(2, length(levs))])),
         column(6, div(style = "margin-top: 30px;",
           downloadButton("az_dl", t("az_dl"), class = "btn-outline-success btn-sm")))
       ),
       plotOutput("azimuth_umap", height = act_h(), width = act_w()),
-      div(class = "mt-3", DTOutput("azimuth_table"))
+      div(class = "mt-3", DTOutput("azimuth_table")),
+      hr(),
+      # --- クラスター × Azimuth 対応表 ---
+      h6(class = "text-primary", t("az_corr_title"), " ",
+         bslib::tooltip(tags$span(icon("circle-question"), style = "cursor: help;"),
+                        t("az_corr_help"), placement = "right")),
+      fluidRow(
+        column(5, selectInput("az_corr_cluster", t("az_corr_cluster"),
+                              choices = cat_cols, selected = clu_sel)),
+        column(4, radioButtons("az_corr_norm", t("az_corr_norm"),
+                  choices = c(setNames("row", t("az_corr_norm_row")),
+                              setNames("col", t("az_corr_norm_col")),
+                              setNames("none", t("az_corr_norm_none"))),
+                  selected = isolate(input$az_corr_norm) %||% "row", inline = FALSE)),
+        column(3, div(style = "margin-top: 24px;",
+          downloadButton("az_corr_dl", t("az_corr_dl"), class = "btn-outline-success btn-sm")))
+      ),
+      plotOutput("azimuth_corr_plot", height = act_h(), width = act_w())
     )
   })
 
   output$azimuth_umap <- renderPlot({
     res <- azimuth_obj(); req(res, input$az_level)
     pt <- plot_theme()
-    red <- if ("ref.umap" %in% names(res@reductions)) "ref.umap" else find_umap_reduction(res)
+    red <- find_umap_reduction(res)
+    if (is.null(red) && "azimuth_embed" %in% names(res@reductions)) {
+      # 2D UMAP が無ければ azimuth_embed から計算
+      res <- tryCatch(RunUMAP(res, reduction = "azimuth_embed",
+                              dims = 1:ncol(res[["azimuth_embed"]]), verbose = FALSE),
+                      error = function(e) res)
+      red <- find_umap_reduction(res)
+    }
     req(red)
     lv <- input$az_level
     res@meta.data[[lv]] <- factor(as.character(res@meta.data[[lv]]),
                                   levels = cluster_level_order(res@meta.data[[lv]]))
     n_lev <- nlevels(res@meta.data[[lv]])
-    p <- DimPlot(res, reduction = red, group.by = lv, label = TRUE,
-                 label.size = input$umap_label_size %||% 4, repel = TRUE) +
+    DimPlot(res, reduction = red, group.by = lv, label = TRUE,
+            label.size = input$umap_label_size %||% 4, repel = TRUE) +
       pt$theme_legend +
       theme(legend.position = if (n_lev > 30) "none" else "bottom")
-    p
   }, bg = "transparent")
 
   output$azimuth_table <- renderDT({
     res <- azimuth_obj(); req(res, input$az_level)
-    lv <- input$az_level
-    sc_col <- paste0(lv, ".score")
-    meta <- res@meta.data
+    lv <- input$az_level; meta <- res@meta.data
     cl <- as.character(meta[[lv]])
-    tab <- as.data.frame(table(cl), stringsAsFactors = FALSE)
-    names(tab) <- c("celltype", "n")
-    if (sc_col %in% names(meta)) {
+    tab <- as.data.frame(table(cl), stringsAsFactors = FALSE); names(tab) <- c("celltype", "n")
+    sc_col <- intersect(c("final_level_confidence", "final_level_softmax_prob"), names(meta))[1]
+    if (!is.na(sc_col)) {
       ms <- tapply(meta[[sc_col]], cl, mean)
       tab$mean_score <- round(as.numeric(ms[tab$celltype]), 3)
-    }
-    if ("mapping.score" %in% names(meta)) {
-      mm <- tapply(meta[["mapping.score"]], cl, mean)
-      tab$mean_mapping <- round(as.numeric(mm[tab$celltype]), 3)
     }
     tab <- tab[order(-tab$n), ]
     datatable(tab, rownames = FALSE, filter = "top",
@@ -4559,12 +4595,61 @@ server <- function(input, output, session) {
   output$az_dl <- downloadHandler(
     filename = function() "azimuth_annotation.csv",
     content = function(file) {
-      res <- azimuth_obj()
-      if (is.null(res)) return()
-      cols <- c(grep("^predicted\\.", names(res@meta.data), value = TRUE), "mapping.score")
-      cols <- cols[cols %in% names(res@meta.data)]
+      res <- azimuth_obj(); if (is.null(res)) return()
+      cols <- intersect(c("azimuth_broad","azimuth_medium","azimuth_fine","azimuth_label",
+                          "final_level_labels","full_hierarchical_labels",
+                          "final_level_confidence","final_level_softmax_prob"),
+                        names(res@meta.data))
       out <- data.frame(cell = rownames(res@meta.data), res@meta.data[, cols, drop = FALSE],
                         stringsAsFactors = FALSE)
+      utils::write.csv(out, file, row.names = FALSE)
+    }
+  )
+
+  # --- クラスター × Azimuth アノテーション 対応表（クロス集計） ---
+  azimuth_corr_mat <- reactive({
+    res <- azimuth_obj(); req(res, input$az_level, input$az_corr_cluster)
+    meta <- res@meta.data; lv <- input$az_level; cv <- input$az_corr_cluster
+    req(cv %in% names(meta))
+    keep <- !is.na(meta[[cv]]) & !is.na(meta[[lv]])
+    cl <- as.character(meta[[cv]])[keep]; az <- as.character(meta[[lv]])[keep]
+    m <- table(cluster = factor(cl, levels = cluster_level_order(cl)), azimuth = az)
+    m <- as.matrix(m)
+    norm <- input$az_corr_norm %||% "row"
+    if (norm == "row")      m <- sweep(m, 1, pmax(1, rowSums(m)), "/")
+    else if (norm == "col") m <- sweep(m, 2, pmax(1, colSums(m)), "/")
+    m
+  })
+
+  output$azimuth_corr_plot <- renderPlot({
+    m <- azimuth_corr_mat(); req(nrow(m) > 0, ncol(m) > 0)
+    pt <- plot_theme()
+    ro <- if (nrow(m) > 2) rownames(m)[stats::hclust(stats::dist(m))$order] else rownames(m)
+    co <- if (ncol(m) > 2) colnames(m)[stats::hclust(stats::dist(base::t(m)))$order] else colnames(m)
+    df <- data.frame(
+      cluster = factor(rep(rownames(m), times = ncol(m)), levels = ro),
+      azimuth = factor(rep(colnames(m), each = nrow(m)), levels = co),
+      val = as.vector(m), stringsAsFactors = FALSE)
+    raw <- identical(input$az_corr_norm, "none")
+    ggplot(df, aes(x = azimuth, y = cluster, fill = val)) +
+      geom_tile(color = "grey85", linewidth = 0.2) +
+      scale_fill_gradient(low = "#F7F7F7", high = "#BC3C29FF",
+                          name = if (raw) t("az_count") else "prop") +
+      labs(x = NULL, y = NULL, title = t("az_corr_title")) +
+      theme_minimal(base_size = 11) +
+      theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5, size = 8),
+            axis.text.y = element_text(size = 8), panel.grid = element_blank(),
+            plot.background = element_rect(fill = pt$bg, color = NA),
+            panel.background = element_rect(fill = pt$bg, color = NA),
+            text = element_text(color = pt$fg), axis.text = element_text(color = pt$fg2),
+            plot.title = element_text(size = 13, face = "bold", color = pt$accent))
+  }, bg = "transparent")
+
+  output$az_corr_dl <- downloadHandler(
+    filename = function() "cluster_vs_azimuth_correspondence.csv",
+    content = function(file) {
+      m <- azimuth_corr_mat()
+      out <- data.frame(cluster = rownames(m), m, check.names = FALSE, stringsAsFactors = FALSE)
       utils::write.csv(out, file, row.names = FALSE)
     }
   )
