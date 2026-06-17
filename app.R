@@ -482,6 +482,10 @@ i18n <- list(
     spatial_by_gene   = "遺伝子発現",
     spatial_gene      = "遺伝子",
     spatial_highlight = "強調・近傍解析の対象クラスター (複数選択可)",
+    spatial_hl_alpha  = "強調: 不透明度",
+    spatial_hl_size   = "強調: 点サイズ",
+    spatial_other_alpha = "その他: 不透明度",
+    spatial_other_size  = "その他: 点サイズ",
     spatial_map       = "マップ",
     spatial_nbr       = "近傍距離",
     spatial_nbr_need  = "メタデータ(カテゴリ)で色分けし、対象クラスターを選択してください。",
@@ -666,6 +670,10 @@ i18n <- list(
     spatial_by_gene   = "Gene expression",
     spatial_gene      = "Gene",
     spatial_highlight = "Target clusters (highlight + neighborhood, multi-select)",
+    spatial_hl_alpha  = "Highlight: opacity",
+    spatial_hl_size   = "Highlight: point size",
+    spatial_other_alpha = "Others: opacity",
+    spatial_other_size  = "Others: point size",
     spatial_map       = "Map",
     spatial_nbr       = "Neighborhood",
     spatial_nbr_need  = "Color by a categorical metadata variable and select target clusters.",
@@ -3576,7 +3584,18 @@ server <- function(input, output, session) {
         },
         # 強調・近傍解析の対象クラスター（メタデータ・カテゴリ色分け時のみ）
         conditionalPanel("input.spatial_by == 'meta'",
-          uiOutput("spatial_highlight_ui"))
+          uiOutput("spatial_highlight_ui"),
+          # 強調クラスター/その他クラスターの 不透明度・点サイズ 個別指定
+          fluidRow(
+            column(3, sliderInput("spatial_hl_alpha", t("spatial_hl_alpha"),
+                                  min = 0.1, max = 1, value = isolate(input$spatial_hl_alpha) %||% 1, step = 0.05)),
+            column(3, sliderInput("spatial_hl_size", t("spatial_hl_size"),
+                                  min = 0.1, max = 4, value = isolate(input$spatial_hl_size) %||% 1.2, step = 0.1)),
+            column(3, sliderInput("spatial_other_alpha", t("spatial_other_alpha"),
+                                  min = 0, max = 1, value = isolate(input$spatial_other_alpha) %||% 0.3, step = 0.05)),
+            column(3, sliderInput("spatial_other_size", t("spatial_other_size"),
+                                  min = 0.1, max = 4, value = isolate(input$spatial_other_size) %||% 0.6, step = 0.1))
+          ))
       )),
       navset_card_tab(
         id = "spatial_subtab",
@@ -3615,12 +3634,33 @@ server <- function(input, output, session) {
   })
 
   output$spatial_plot_ui <- renderUI({
-    if (requireNamespace("plotly", quietly = TRUE)) {
-      plotly::plotlyOutput("spatial_plotly", height = act_h(), width = act_w())
-    } else {
-      plotOutput("spatial_plot", height = act_h(), width = act_w())
-    }
+    tagList(
+      div(class = "mb-2",
+        actionButton("spatial_map_run", t("plot_run"), class = "btn-primary btn-sm",
+                     icon = icon("play"))),
+      if ((input$spatial_map_run %||% 0) == 0) {
+        run_hint_ui()
+      } else if (requireNamespace("plotly", quietly = TRUE)) {
+        plotly::plotlyOutput("spatial_plotly", height = act_h(), width = act_w())
+      } else {
+        plotOutput("spatial_plot", height = act_h(), width = act_w())
+      }
+    )
   })
+
+  # マップ描画は「描画」ボタン押下時のみ計算（大規模データの自動再描画を防止）。
+  # 表示パラメータも押下時点の値をスナップショットして固定する。
+  spatial_map_spec <- eventReactive(input$spatial_map_run, {
+    list(pr = spatial_prep(),
+         pt_sz = input$spatial_pt %||% 0.8,
+         flip = isTRUE(input$spatial_flip),
+         colorvar = spatial_colorvar(),
+         highlight = input$spatial_highlight,
+         hl_alpha = input$spatial_hl_alpha %||% 1,
+         hl_size = input$spatial_hl_size %||% 1.2,
+         other_alpha = input$spatial_other_alpha %||% 0.3,
+         other_size = input$spatial_other_size %||% 0.6)
+  }, ignoreInit = TRUE)
 
   # 色分けに使う名前（メタデータ変数名 or 遺伝子名）
   spatial_colorvar <- reactive({
@@ -3667,13 +3707,22 @@ server <- function(input, output, session) {
     list(df = df, sg = sg, use_seg = use_seg, is_cat = is_cat, facet = facet)
   })
 
+  # 色(hex/名前)に不透明度を付与して rgba 文字列にする
+  hex_rgba <- function(col, a) {
+    rgb <- grDevices::col2rgb(col)
+    sprintf("rgba(%d,%d,%d,%.3f)", rgb[1, ], rgb[2, ], rgb[3, ], a)
+  }
+
   # --- インタラクティブ版（点/ポリゴンにホバーでラベル表示）---
   if (requireNamespace("plotly", quietly = TRUE)) {
-    # 1サンプル分の plotly を構築
-    spatial_one_plotly <- function(d, sg, use_seg, is_cat, pt_sz, flip, colorvar,
-                                   disc_pal, showlegend) {
+    # 1サンプル分の plotly を構築。hl= 強調クラスター集合, hl_alpha/size・other_alpha/size で
+    # 透明度と点サイズを強調/非強調ごとに指定。
+    spatial_one_plotly <- function(d, sg, use_seg, is_cat, flip, colorvar, disc_pal, showlegend,
+                                   hl, hl_alpha, hl_size, other_alpha, other_size, base_size) {
       yf <- if (flip) function(v) -v else function(v) v
       d$hover <- paste0(colorvar, ": ", as.character(d$col), "<br>cell: ", d$cell)
+      has_hl <- is_cat && !is.null(hl) && length(hl) > 0
+      d$ishl <- if (has_hl) as.character(d$col) %in% hl else TRUE
       fig <- plotly::plot_ly()
       if (use_seg && !is.null(sg) && nrow(sg) > 0 && is_cat) {
         # カテゴリごとに1トレース（ポリゴンをNAで区切り fill='toself'）
@@ -3681,27 +3730,48 @@ server <- function(input, output, session) {
           cl_cells <- d$cell[d$col == lev]
           s <- sg[sg$cell %in% cl_cells, , drop = FALSE]
           if (!nrow(s)) next
+          a <- if (!has_hl) 1 else if (lev %in% hl) hl_alpha else other_alpha
+          if (a <= 0) next
           xs <- unlist(lapply(split(s$x, factor(s$cell, unique(s$cell))), function(z) c(z, NA)))
           ys <- unlist(lapply(split(s$y, factor(s$cell, unique(s$cell))), function(z) c(yf(z), NA)))
           fig <- plotly::add_trace(fig, x = xs, y = ys, type = "scatter", mode = "lines",
-            fill = "toself", fillcolor = unname(disc_pal[lev]),
+            fill = "toself", fillcolor = hex_rgba(unname(disc_pal[lev]), a),
             line = list(width = 0.4, color = "rgba(255,255,255,0.5)"),
             name = lev, legendgroup = lev, showlegend = showlegend, hoverinfo = "skip")
         }
-        # ホバー用の重心マーカー（小さく）
         fig <- plotly::add_trace(fig, data = d, x = ~x, y = yf(d$y), type = "scattergl",
           mode = "markers", marker = list(size = 3, color = "rgba(0,0,0,0)"),
           text = ~hover, hoverinfo = "text", showlegend = FALSE)
       } else if (is_cat) {
-        cols <- unname(disc_pal[as.character(d$col)])
-        fig <- plotly::add_trace(fig, data = d, x = ~x, y = yf(d$y), type = "scattergl",
-          mode = "markers", color = ~col, colors = disc_pal,
-          marker = list(size = pt_sz * 5), text = ~hover, hoverinfo = "text",
-          showlegend = showlegend)
+        add_group <- function(dd, sz, a, sl) {
+          if (nrow(dd) == 0) return(fig)
+          dd$mc <- hex_rgba(unname(disc_pal[as.character(dd$col)]), a)
+          plotly::add_trace(fig, data = dd, x = ~x, y = yf(dd$y), type = "scattergl",
+            mode = "markers", marker = list(size = sz * 5, color = ~mc),
+            text = ~hover, hoverinfo = "text", showlegend = FALSE)
+        }
+        if (has_hl) {
+          # 非強調を下(背景)、強調を上(前面)に描く
+          fig <- add_group(d[!d$ishl, , drop = FALSE], other_size, other_alpha, FALSE)
+          fig <- add_group(d[d$ishl, , drop = FALSE], hl_size, hl_alpha, FALSE)
+          # 凡例用の色付きダミー（強調クラスターのみ）
+          if (showlegend) for (lev in hl[hl %in% levels(d$col)]) {
+            fig <- plotly::add_trace(fig, x = c(NA), y = c(NA), type = "scattergl", mode = "markers",
+              marker = list(size = 8, color = unname(disc_pal[lev])), name = lev,
+              showlegend = TRUE, hoverinfo = "skip")
+          }
+        } else {
+          fig <- add_group(d, base_size, 1, showlegend)
+          if (showlegend) for (lev in levels(droplevels(d$col))) {
+            fig <- plotly::add_trace(fig, x = c(NA), y = c(NA), type = "scattergl", mode = "markers",
+              marker = list(size = 8, color = unname(disc_pal[lev])), name = lev,
+              showlegend = TRUE, hoverinfo = "skip")
+          }
+        }
       } else {
         fig <- plotly::add_trace(fig, data = d, x = ~x, y = yf(d$y), type = "scattergl",
           mode = "markers",
-          marker = list(size = pt_sz * 5, color = ~col, colorscale = "Viridis",
+          marker = list(size = base_size * 5, color = ~col, colorscale = "Viridis",
                         showscale = showlegend, colorbar = list(title = colorvar)),
           text = ~hover, hoverinfo = "text", showlegend = FALSE)
       }
@@ -3712,19 +3782,18 @@ server <- function(input, output, session) {
     }
 
     output$spatial_plotly <- plotly::renderPlotly({
-      pr <- spatial_prep(); pt <- plot_theme()
-      df <- pr$df; pt_sz <- input$spatial_pt %||% 0.8
-      flip <- isTRUE(input$spatial_flip); colorvar <- spatial_colorvar()
+      spec <- spatial_map_spec(); pr <- spec$pr; pt <- plot_theme()
+      df <- pr$df; flip <- spec$flip; colorvar <- spec$colorvar
+      hl <- spec$highlight
       disc_pal <- NULL
       if (pr$is_cat) {
         lin <- lineage_colors_or_null(df$col)
         levs <- levels(df$col)
         disc_pal <- if (!is.null(lin)) lin[levs] else
           setNames(scales::hue_pal()(length(levs)), levs)
-        # 強調: 選択クラスター以外を灰色にして対象を目立たせる
-        hl <- input$spatial_highlight
+        # 強調指定時、その他クラスターは灰色に
         if (!is.null(hl) && length(hl) > 0) {
-          disc_pal[!(names(disc_pal) %in% hl)] <- "#D9D9D9"
+          disc_pal[!(names(disc_pal) %in% hl)] <- "#9E9E9E"
         }
       }
       showleg <- !(pr$is_cat && nlevels(df$col) > 30)
@@ -3732,15 +3801,19 @@ server <- function(input, output, session) {
       build1 <- function(s, first) {
         d <- if (is.na(s)) df else df[df$sample == s, , drop = FALSE]
         sg <- if (!is.null(pr$sg)) pr$sg[pr$sg$cell %in% d$cell, , drop = FALSE] else NULL
-        f <- spatial_one_plotly(d, sg, pr$use_seg, pr$is_cat, pt_sz, flip, colorvar,
-                                disc_pal, showlegend = (first && showleg))
+        f <- spatial_one_plotly(d, sg, pr$use_seg, pr$is_cat, flip, colorvar, disc_pal,
+          showlegend = (first && showleg), hl = hl, hl_alpha = spec$hl_alpha,
+          hl_size = spec$hl_size, other_alpha = spec$other_alpha, other_size = spec$other_size,
+          base_size = spec$pt_sz)
         if (!is.na(s)) f <- plotly::layout(f, annotations = list(text = s, x = 0.5, y = 1.0,
           xref = "paper", yref = "paper", showarrow = FALSE, font = list(color = pt$fg)))
         f
       }
       fig <- if (pr$facet) {
+        # サンプル数が多いときは正方形に近いグリッドに配置して見やすく
         figs <- lapply(seq_along(samples), function(i) build1(samples[i], i == 1))
-        plotly::subplot(figs, nrows = 1, margin = 0.02, titleX = FALSE, titleY = FALSE)
+        nr <- max(1, round(sqrt(length(samples))))
+        plotly::subplot(figs, nrows = nr, margin = 0.015, titleX = FALSE, titleY = FALSE)
       } else build1(NA, TRUE)
       plotly::layout(fig, paper_bgcolor = pt$bg, plot_bgcolor = pt$bg,
                      font = list(color = pt$fg), legend = list(font = list(color = pt$fg)))
@@ -3748,9 +3821,9 @@ server <- function(input, output, session) {
   }
 
   output$spatial_plot <- renderPlot({
-    pr <- spatial_prep(); pt <- plot_theme()
+    spec <- spatial_map_spec(); pt <- plot_theme(); pr <- spec$pr
     df <- pr$df; sg <- pr$sg; use_seg <- pr$use_seg; is_cat <- pr$is_cat; facet <- pr$facet
-    pt_sz <- input$spatial_pt %||% 0.8
+    pt_sz <- spec$pt_sz
     if (use_seg && !is.null(sg)) {
       cmap <- setNames(df$col, df$cell); sg$col <- cmap[sg$cell]
       if (!is.null(df$sample)) sg$sample <- setNames(df$sample, df$cell)[sg$cell]
