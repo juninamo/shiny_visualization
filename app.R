@@ -493,7 +493,20 @@ i18n <- list(
     spatial_nbr_y     = "対象細胞の累積割合",
     spatial_nbr_title = "%s から各クラスターへの最近接距離 (近いほど左)",
     spatial_nbr_run   = "近傍解析を実行",
-    spatial_nbr_help  = "対象クラスターの各細胞から、他クラスターの最も近い細胞までの距離を計算し、その累積分布(ECDF)を描きます。曲線が左にあるほどそのクラスターは対象クラスターの近くに位置します(y=0.5が距離の中央値)。同一サンプル内でのみ距離を計算します。",
+    spatial_nbr_help  = "対象クラスターの各細胞から、他クラスターの最も近い細胞までの距離を計算し、その累積分布(ECDF)を描きます。曲線が左にあるほどそのクラスターは対象クラスターの近くに位置します(y=0.5が距離の中央値)。同一サンプル内でのみ距離を計算します。複数サンプル選択時はサンプルごとに計算し、平均±標準偏差を信頼帯(リボン)として表示します。",
+    spatial_co        = "Co-occurrence",
+    spatial_co_run    = "Co-occurrence を計算",
+    spatial_co_x      = "距離",
+    spatial_co_y      = "Co-occurrence 比 (P(j|i,d)/P(j))",
+    spatial_co_title  = "%s 周辺における各クラスターの共局在 (>1:濃縮, <1:希薄)",
+    spatial_co_help   = "squidpy の co_occurrence を参考にした指標です。対象クラスター i の細胞から距離 d の範囲(リング)内に他クラスター j の細胞が見つかる条件付き確率 P(j | i, d) を、全体での j の割合 P(j) で割った比を距離ごとに描きます。1より大きいと i の周囲に j が濃縮、1未満だと希薄を意味します。サンプルごとに計算し平均±標準偏差をリボン表示します。",
+    spatial_ne        = "Neighbors enrichment",
+    spatial_ne_run    = "Neighbors enrichment を計算",
+    spatial_ne_k      = "近傍数 k",
+    spatial_ne_perm   = "並べ替え回数",
+    spatial_ne_title  = "Neighbors enrichment z-score (正:隣接, 負:回避)",
+    spatial_ne_help   = "squidpy の nhood_enrichment を参考にした指標です。各細胞の k 近傍で空間グラフを作り、クラスター間の隣接エッジ数を、ラベルをランダムに並べ替えた帰無分布と比較して z-score を計算します。正の値はそのクラスター対が予想より隣接、負の値は回避を意味します。z-score 行列をヒートマップで表示します(同一サンプル内のエッジのみ)。",
+    spatial_need_run  = "対象を選び「計算」ボタンを押してください。",
 
     # プレースホルダ
     placeholder_load  = "\U0001F4C2 RDSファイルを選択して「読み込む」ボタンを押してください",
@@ -681,7 +694,20 @@ i18n <- list(
     spatial_nbr_y     = "Cumulative fraction of target cells",
     spatial_nbr_title = "Nearest-neighbor distance from %s to each cluster (closer = left)",
     spatial_nbr_run   = "Run neighborhood analysis",
-    spatial_nbr_help  = "For each cell of a target cluster, computes the distance to the nearest cell of every other cluster and draws the cumulative distribution (ECDF). A curve further to the left means that cluster sits closer to the target (y=0.5 is the median distance). Distances are computed within the same sample only.",
+    spatial_nbr_help  = "For each cell of a target cluster, computes the distance to the nearest cell of every other cluster and draws the cumulative distribution (ECDF). A curve further to the left means that cluster sits closer to the target (y=0.5 is the median distance). Distances are computed within the same sample only. With multiple samples it computes per sample and shows mean +/- SD as a confidence band.",
+    spatial_co        = "Co-occurrence",
+    spatial_co_run    = "Compute co-occurrence",
+    spatial_co_x      = "Distance",
+    spatial_co_y      = "Co-occurrence ratio (P(j|i,d)/P(j))",
+    spatial_co_title  = "Co-occurrence of clusters around %s (>1: enriched, <1: depleted)",
+    spatial_co_help   = "Inspired by squidpy's co_occurrence. For target cluster i, the conditional probability P(j | i, d) of finding cluster j within a distance ring d of i is divided by the overall fraction P(j); plotted vs distance. >1 means j is enriched near i, <1 depleted. Computed per sample; mean +/- SD shown as a band.",
+    spatial_ne        = "Neighbors enrichment",
+    spatial_ne_run    = "Compute neighbors enrichment",
+    spatial_ne_k      = "Neighbors k",
+    spatial_ne_perm   = "Permutations",
+    spatial_ne_title  = "Neighbors-enrichment z-score (positive: adjacent, negative: avoidance)",
+    spatial_ne_help   = "Inspired by squidpy's nhood_enrichment. Builds a spatial kNN graph and compares the number of edges between each cluster pair to a permutation null (shuffled labels) as a z-score. Positive = that cluster pair is adjacent more than expected, negative = avoidance. Shown as a z-score matrix heatmap (within-sample edges only).",
+    spatial_need_run  = "Select targets and click Compute.",
 
     # Placeholders
     placeholder_load  = "\U0001F4C2 Select an RDS file and click 'Load'",
@@ -3602,7 +3628,11 @@ server <- function(input, output, session) {
         nav_panel(title = "\U0001F5FA️ Map", value = "map",
                   card_body(class = "p-2", uiOutput("spatial_plot_ui"))),
         nav_panel(title = "\U0001F4CF Neighborhood", value = "nbr",
-                  card_body(class = "p-2", uiOutput("spatial_nbr_ui")))
+                  card_body(class = "p-2", uiOutput("spatial_nbr_ui"))),
+        nav_panel(title = "\U0001F517 Co-occurrence", value = "co",
+                  card_body(class = "p-2", uiOutput("spatial_co_ui"))),
+        nav_panel(title = "\U0001F525 Enrichment", value = "ne",
+                  card_body(class = "p-2", uiOutput("spatial_ne_ui")))
       )
     )
   })
@@ -3933,88 +3963,286 @@ server <- function(input, output, session) {
   })
 
   # 対象細胞群から他クラスター細胞群への最近接距離（同一サンプル内）
-  nn_dist_anchor_to_b <- function(df, aCells, bCells) {
-    ds <- numeric(0)
-    for (smp in unique(df$sample)) {
-      a <- df[df$cell %in% aCells & df$sample == smp, c("x", "y"), drop = FALSE]
-      b <- df[df$cell %in% bCells & df$sample == smp, c("x", "y"), drop = FALSE]
-      if (nrow(a) == 0 || nrow(b) == 0) next
+  # 対象クラスター(A)の各細胞から クラスターB の最近接距離（サンプルごとのベクトル）
+  nn_dist_per_sample <- function(df, A, B, cap = 3000) {
+    lapply(unique(df$sample), function(smp) {
+      a <- df[df$sample == smp & as.character(df$col) == A, c("x", "y"), drop = FALSE]
+      b <- df[df$sample == smp & as.character(df$col) == B, c("x", "y"), drop = FALSE]
+      if (nrow(a) < 3 || nrow(b) < 1) return(NULL)
+      if (nrow(a) > cap) a <- a[sample(nrow(a), cap), , drop = FALSE]
       nn <- tryCatch(FNN::get.knnx(as.matrix(b), as.matrix(a), k = 1)$nn.dist[, 1],
                      error = function(e) NULL)
-      if (is.null(nn)) {
-        nn <- apply(as.matrix(a), 1, function(p)
-          sqrt(min(colSums((t(as.matrix(b)) - p)^2))))
-      }
-      ds <- c(ds, nn)
-    }
-    ds
+      if (is.null(nn)) nn <- apply(as.matrix(a), 1, function(p)
+        sqrt(min(colSums((t(as.matrix(b)) - p)^2))))
+      nn <- nn[is.finite(nn) & nn > 0]
+      if (length(nn) < 3) NULL else nn
+    })
   }
 
+  # 近傍距離 ECDF（距離グリッド上で「最近接 ≤ x」割合、サンプルごと→平均±SD）
   spatial_nbr_obj <- eventReactive(input$spatial_nbr_run, {
     df <- spatial_nbr_df()
     anchors <- input$spatial_highlight
     validate(need(length(anchors) > 0, t("spatial_nbr_need")))
     levs <- levels(df$col)
-    rows <- list()
-    for (A in anchors) {
-      aCells <- df$cell[as.character(df$col) == A]
-      if (length(aCells) < 3) next
-      if (length(aCells) > 3000) aCells <- sample(aCells, 3000)   # 高速化のため間引き
-      others <- setdiff(levs, A)
-      res <- lapply(others, function(B) {
-        bCells <- df$cell[as.character(df$col) == B]
-        if (length(bCells) < 3) return(NULL)
-        ds <- nn_dist_anchor_to_b(df, aCells, bCells)
-        ds <- ds[is.finite(ds) & ds > 0]
-        if (length(ds) < 3) return(NULL)
-        probs <- seq(0.02, 1, length.out = 100)
-        data.frame(anchor = A, cluster = B,
-                   dist = as.numeric(stats::quantile(ds, probs)),
-                   frac = probs, med = stats::median(ds), stringsAsFactors = FALSE)
-      })
-      res <- Filter(Negate(is.null), res)
-      if (!length(res)) next
-      # 線が多すぎる場合は中央値が近い順に最大40クラスターに絞る
-      meds <- vapply(res, function(r) r$med[1], numeric(1))
-      keep <- order(meds)[seq_len(min(40, length(res)))]
-      rows <- c(rows, res[keep])
+    recs <- list()
+    for (A in anchors) for (B in setdiff(levs, A)) {
+      d <- Filter(Negate(is.null), nn_dist_per_sample(df, A, B))
+      if (!length(d)) next
+      recs[[paste(A, "||", B)]] <- list(A = A, B = B, d = d,
+                                        med = stats::median(unlist(d)))
     }
-    validate(need(length(rows) > 0, t("spatial_nbr_need")))
-    do.call(rbind, rows)
+    validate(need(length(recs) > 0, t("spatial_nbr_need")))
+    alld <- unlist(lapply(recs, function(r) unlist(r$d)))
+    rng <- range(alld[alld > 0]); rng[1] <- max(rng[1], rng[2] / 1e4)
+    grid <- exp(seq(log(rng[1]), log(rng[2]), length.out = 60))
+    # アンカーごとに中央値が近い順 最大40クラスターに絞る
+    byA <- split(recs, vapply(recs, function(r) r$A, ""))
+    keepRecs <- unlist(lapply(byA, function(rs) {
+      ord <- order(vapply(rs, function(r) r$med, 0))
+      rs[ord[seq_len(min(40, length(rs)))]]
+    }), recursive = FALSE)
+    do.call(rbind, lapply(keepRecs, function(r) {
+      fr <- vapply(r$d, function(dd) stats::ecdf(dd)(grid), numeric(length(grid)))
+      if (is.null(dim(fr))) fr <- matrix(fr, ncol = 1)
+      ym <- rowMeans(fr); ys <- if (ncol(fr) > 1) apply(fr, 1, stats::sd) else rep(0, nrow(fr))
+      data.frame(anchor = r$A, cluster = r$B, x = grid, ymean = ym,
+                 ylow = pmax(0, ym - ys), yhigh = pmin(1, ym + ys),
+                 nsamp = ncol(fr), stringsAsFactors = FALSE)
+    }))
   }, ignoreInit = TRUE)
 
-  spatial_nbr_ggplot <- reactive({
-    d <- spatial_nbr_obj(); req(d)
+  # 折れ線 + 信頼帯(リボン) の共通描画（co-occurrence でも再利用）
+  spatial_curve_ggplot <- function(d, xlab, ylab, title_fmt, logx = TRUE, hline = NULL) {
     pt <- plot_theme()
     d$cluster <- factor(d$cluster, levels = cluster_level_order(unique(d$cluster)))
-    d$tip <- paste0(d$cluster, "<br>", t("spatial_nbr_x"), ": ", round(d$dist, 1),
-                    "<br>", t("spatial_nbr_y"), ": ", round(d$frac, 2))
-    p <- ggplot(d, aes(x = dist, y = frac, color = cluster, group = cluster, text = tip)) +
-      geom_line(linewidth = 0.6) +
-      scale_x_log10() +
-      labs(x = t("spatial_nbr_x"), y = t("spatial_nbr_y"), color = NULL) +
+    d$tip <- paste0(d$cluster, "<br>", xlab, ": ", signif(d$x, 3),
+                    "<br>", ylab, ": ", round(d$ymean, 3))
+    p <- ggplot(d, aes(x = x, group = cluster))
+    if (any(d$nsamp > 1)) p <- p +
+      geom_ribbon(aes(ymin = ylow, ymax = yhigh, fill = cluster), alpha = 0.15, color = NA)
+    p <- p + geom_line(aes(y = ymean, color = cluster, text = tip), linewidth = 0.6)
+    if (!is.null(hline)) p <- p + geom_hline(yintercept = hline, linetype = "dashed",
+                                             color = pt$fg2, linewidth = 0.4)
+    if (logx) p <- p + scale_x_log10()
+    p <- p + labs(x = xlab, y = ylab, color = NULL, fill = NULL) +
       theme_minimal(base_size = 12) +
-      theme(
-        plot.background = element_rect(fill = pt$bg, color = NA),
-        panel.background = element_rect(fill = pt$bg, color = NA),
-        panel.grid.minor = element_blank(),
-        text = element_text(color = pt$fg),
-        axis.text = element_text(color = pt$fg2),
-        legend.text = element_text(color = pt$fg),
-        strip.text = element_text(color = pt$fg, face = "bold"))
+      theme(plot.background = element_rect(fill = pt$bg, color = NA),
+            panel.background = element_rect(fill = pt$bg, color = NA),
+            panel.grid.minor = element_blank(),
+            text = element_text(color = pt$fg), axis.text = element_text(color = pt$fg2),
+            legend.text = element_text(color = pt$fg),
+            strip.text = element_text(color = pt$fg, face = "bold"))
     lin <- lineage_colors_or_null(levels(d$cluster))
-    if (!is.null(lin)) p <- p + scale_color_manual(values = lin)
+    if (!is.null(lin)) p <- p + scale_color_manual(values = lin) + scale_fill_manual(values = lin)
     if (length(unique(d$anchor)) > 1) p <- p + facet_wrap(~ anchor)
-    else p <- p + ggtitle(sprintf(t("spatial_nbr_title"), unique(d$anchor)))
+    else p <- p + ggtitle(sprintf(title_fmt, unique(d$anchor)))
     p
-  })
+  }
 
+  spatial_nbr_ggplot <- reactive({
+    spatial_curve_ggplot(spatial_nbr_obj(), t("spatial_nbr_x"), t("spatial_nbr_y"),
+                         t("spatial_nbr_title"))
+  })
   if (requireNamespace("plotly", quietly = TRUE)) {
     output$spatial_nbr_plot <- plotly::renderPlotly({
       plotly::ggplotly(spatial_nbr_ggplot(), tooltip = "text")
     })
   }
   output$spatial_nbr_plot_static <- renderPlot({ spatial_nbr_ggplot() }, bg = "transparent")
+
+  # ==========================================================================
+  # Spatial: Co-occurrence probability（squidpy 参考）
+  # ==========================================================================
+  output$spatial_co_ui <- renderUI({
+    lang <- input$lang
+    if (!data_loaded()) return(placeholder_ui())
+    tagList(
+      uiOutput("spatial_nbr_sample_ui"),
+      div(class = "d-flex align-items-center gap-2 mb-2",
+        actionButton("spatial_co_run", t("spatial_co_run"), class = "btn-primary btn-sm",
+                     icon = icon("link")),
+        bslib::tooltip(tags$span(icon("circle-question"), style = "cursor: help;"),
+                       t("spatial_co_help"), placement = "right")),
+      if (requireNamespace("plotly", quietly = TRUE))
+        plotly::plotlyOutput("spatial_co_plot", height = act_h(), width = act_w())
+      else plotOutput("spatial_co_plot_static", height = act_h(), width = act_w())
+    )
+  })
+
+  # 1サンプル内: アンカーAから距離リングごとの co-occurrence 比（クラスター別）
+  co_one_sample <- function(coords, lab, A, breaks, levs, n_tot, cap = 1500) {
+    ai <- which(lab == A)
+    if (length(ai) < 3) return(NULL)
+    if (length(ai) > cap) ai <- sample(ai, cap)
+    Rmax <- max(breaks)
+    nn <- tryCatch(RANN::nn2(coords, coords[ai, , drop = FALSE], k = min(nrow(coords), 400),
+                             searchtype = "radius", radius = Rmax), error = function(e) NULL)
+    if (is.null(nn)) return(NULL)
+    fi <- as.vector(nn$nn.idx); fd <- as.vector(nn$nn.dists)
+    keep <- fi > 0 & fd > 0
+    if (!any(keep)) return(NULL)
+    ring <- findInterval(fd[keep], breaks, rightmost.closed = TRUE)
+    nbl  <- lab[fi[keep]]
+    ok <- ring >= 1 & ring <= (length(breaks) - 1)
+    tab <- table(factor(ring[ok], levels = seq_len(length(breaks) - 1)),
+                 factor(nbl[ok], levels = levs))
+    tot <- rowSums(tab)
+    pj <- vapply(levs, function(j) sum(lab == j) / n_tot, 0)   # 全体での割合
+    ratio <- sweep(tab, 1, ifelse(tot == 0, NA, tot), "/")     # P(j|A,ring)
+    ratio <- sweep(ratio, 2, ifelse(pj == 0, NA, pj), "/")     # / P(j)
+    ratio  # ring x cluster
+  }
+
+  spatial_co_obj <- eventReactive(input$spatial_co_run, {
+    df <- spatial_nbr_df()
+    anchors <- input$spatial_highlight
+    validate(need(length(anchors) > 0, t("spatial_need_run")))
+    levs <- levels(droplevels(df$col))
+    # 距離リング: 全細胞の最近接距離中央値を基準に Rmax を決め、線形に分割
+    mednn <- stats::median(vapply(unique(df$sample), function(smp) {
+      cc <- as.matrix(df[df$sample == smp, c("x", "y")])
+      if (nrow(cc) < 5) return(NA_real_)
+      stats::median(FNN::get.knn(cc, k = 1)$nn.dist[, 1])
+    }, 0), na.rm = TRUE)
+    if (!is.finite(mednn) || mednn <= 0) mednn <- 10
+    breaks <- seq(0, mednn * 40, length.out = 21)
+    mids <- (head(breaks, -1) + breaks[-1]) / 2
+    out <- list()
+    for (A in anchors) {
+      per <- lapply(unique(df$sample), function(smp) {
+        sub <- df[df$sample == smp, , drop = FALSE]
+        co_one_sample(as.matrix(sub[, c("x", "y")]), as.character(sub$col), A,
+                      breaks, levs, nrow(sub))
+      })
+      per <- Filter(Negate(is.null), per)
+      if (!length(per)) next
+      for (j in levs[levs != A]) {
+        vals <- vapply(per, function(m) as.numeric(m[, j]), numeric(length(mids)))
+        if (is.null(dim(vals))) vals <- matrix(vals, ncol = 1)
+        ym <- rowMeans(vals, na.rm = TRUE)
+        ys <- if (ncol(vals) > 1) apply(vals, 1, stats::sd, na.rm = TRUE) else rep(0, nrow(vals))
+        keep <- is.finite(ym)
+        if (!any(keep)) next
+        out[[paste(A, j)]] <- data.frame(anchor = A, cluster = j, x = mids[keep],
+          ymean = ym[keep], ylow = pmax(0, (ym - ys)[keep]), yhigh = (ym + ys)[keep],
+          nsamp = ncol(vals), stringsAsFactors = FALSE)
+      }
+    }
+    validate(need(length(out) > 0, t("spatial_need_run")))
+    do.call(rbind, out)
+  }, ignoreInit = TRUE)
+
+  spatial_co_ggplot <- reactive({
+    spatial_curve_ggplot(spatial_co_obj(), t("spatial_co_x"), t("spatial_co_y"),
+                         t("spatial_co_title"), logx = FALSE, hline = 1)
+  })
+  if (requireNamespace("plotly", quietly = TRUE)) {
+    output$spatial_co_plot <- plotly::renderPlotly({
+      plotly::ggplotly(spatial_co_ggplot(), tooltip = "text")
+    })
+  }
+  output$spatial_co_plot_static <- renderPlot({ spatial_co_ggplot() }, bg = "transparent")
+
+  # ==========================================================================
+  # Spatial: Neighbors enrichment（squidpy 参考、置換 z-score）
+  # ==========================================================================
+  output$spatial_ne_ui <- renderUI({
+    lang <- input$lang
+    if (!data_loaded()) return(placeholder_ui())
+    tagList(
+      uiOutput("spatial_nbr_sample_ui"),
+      fluidRow(
+        column(4, numericInput("spatial_ne_k", t("spatial_ne_k"),
+                               value = isolate(input$spatial_ne_k) %||% 6, min = 2, max = 30, step = 1)),
+        column(4, numericInput("spatial_ne_perm", t("spatial_ne_perm"),
+                               value = isolate(input$spatial_ne_perm) %||% 100, min = 20, max = 1000, step = 20)),
+        column(4, div(style = "margin-top: 24px;",
+          div(class = "d-flex align-items-center gap-2",
+            actionButton("spatial_ne_run", t("spatial_ne_run"), class = "btn-primary btn-sm",
+                         icon = icon("project-diagram")),
+            bslib::tooltip(tags$span(icon("circle-question"), style = "cursor: help;"),
+                           t("spatial_ne_help"), placement = "right"))))
+      ),
+      if (requireNamespace("plotly", quietly = TRUE))
+        plotly::plotlyOutput("spatial_ne_plot", height = act_h(), width = act_w())
+      else plotOutput("spatial_ne_plot_static", height = act_h(), width = act_w())
+    )
+  })
+
+  spatial_ne_obj <- eventReactive(input$spatial_ne_run, {
+    df <- spatial_nbr_df()
+    validate(need(nlevels(droplevels(df$col)) >= 2, t("spatial_need_run")))
+    k <- max(2, input$spatial_ne_k %||% 6); nperm <- max(20, input$spatial_ne_perm %||% 100)
+    levs <- levels(droplevels(df$col)); K <- length(levs)
+    li <- setNames(seq_len(K), levs)
+    e1 <- integer(0); e2 <- integer(0); labv <- integer(0); sampv <- integer(0)
+    base <- 0L; sid <- 0L
+    for (smp in unique(df$sample)) {
+      sub <- df[df$sample == smp, , drop = FALSE]
+      cc <- as.matrix(sub[, c("x", "y")]); n <- nrow(cc)
+      if (n > 20000) { ix <- sample(n, 20000); cc <- cc[ix, ]; sub <- sub[ix, ]; n <- 20000 }
+      if (n <= k) next
+      sid <- sid + 1L
+      knn <- FNN::get.knn(cc, k = k)$nn.index
+      u <- rep(seq_len(n), times = k); v <- as.vector(knn)
+      a <- pmin(u, v) + base; b <- pmax(u, v) + base
+      e1 <- c(e1, a); e2 <- c(e2, b)
+      labv <- c(labv, li[as.character(sub$col)]); sampv <- c(sampv, rep(sid, n))
+      base <- base + n
+    }
+    validate(need(length(e1) > 0, t("spatial_need_run")))
+    # 無向ユニークエッジ
+    key <- paste(e1, e2); dup <- !duplicated(key); e1 <- e1[dup]; e2 <- e2[dup]
+    count_mat <- function(lab) {
+      a <- lab[e1]; b <- lab[e2]
+      m <- matrix(0, K, K)
+      tab <- table(factor(a, levels = seq_len(K)), factor(b, levels = seq_len(K)))
+      m <- as.matrix(tab); m + base::t(m)   # 対称化（t は翻訳ヘルパーなので base::t）
+    }
+    obs <- count_mat(labv)
+    sm <- matrix(0, K, K); sm2 <- matrix(0, K, K)
+    sample_idx <- split(seq_along(labv), sampv)
+    for (p in seq_len(nperm)) {
+      lp <- labv
+      for (idx in sample_idx) lp[idx] <- sample(labv[idx])   # サンプル内でシャッフル
+      cm <- count_mat(lp); sm <- sm + cm; sm2 <- sm2 + cm^2
+    }
+    mu <- sm / nperm; sdv <- sqrt(pmax(0, sm2 / nperm - mu^2))
+    z <- (obs - mu) / ifelse(sdv == 0, NA, sdv)
+    dimnames(z) <- list(levs, levs)
+    z
+  }, ignoreInit = TRUE)
+
+  spatial_ne_ggplot <- reactive({
+    z <- spatial_ne_obj(); req(z)
+    pt <- plot_theme()
+    ord <- cluster_level_order(rownames(z))
+    df <- data.frame(
+      a = factor(rep(rownames(z), times = ncol(z)), levels = ord),
+      b = factor(rep(colnames(z), each = nrow(z)), levels = ord),
+      z = as.vector(z), stringsAsFactors = FALSE)
+    df$tip <- paste0(df$a, " - ", df$b, "<br>z: ", round(df$z, 2))
+    lim <- max(abs(df$z), na.rm = TRUE)
+    ggplot(df, aes(x = a, y = b, fill = z, text = tip)) +
+      geom_tile(color = "white", linewidth = 0.2) +
+      scale_fill_gradient2(low = "#3C5488FF", mid = "white", high = "#DC0000FF",
+                           midpoint = 0, limits = c(-lim, lim), name = "z") +
+      labs(x = NULL, y = NULL, title = t("spatial_ne_title")) +
+      theme_minimal(base_size = 11) +
+      theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5, size = 8),
+            axis.text.y = element_text(size = 8), panel.grid = element_blank(),
+            plot.background = element_rect(fill = pt$bg, color = NA),
+            panel.background = element_rect(fill = pt$bg, color = NA),
+            text = element_text(color = pt$fg), axis.text = element_text(color = pt$fg2),
+            plot.title = element_text(size = 13, face = "bold", color = pt$accent))
+  })
+  if (requireNamespace("plotly", quietly = TRUE)) {
+    output$spatial_ne_plot <- plotly::renderPlotly({
+      plotly::ggplotly(spatial_ne_ggplot(), tooltip = "text")
+    })
+  }
+  output$spatial_ne_plot_static <- renderPlot({ spatial_ne_ggplot() }, bg = "transparent")
 }
 
 # --- アプリ実行 ---
