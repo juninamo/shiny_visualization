@@ -3667,14 +3667,15 @@ server <- function(input, output, session) {
                    multiple = TRUE, options = list(plugins = list("remove_button")))
   })
 
+  # プロット出力は常にDOMに置く（動的挿入による htmlwidget 初期化失敗を回避）。
+  # 計算は「描画」ボタン押下時のみ（observeEvent → reactiveVal）。
   output$spatial_plot_ui <- renderUI({
     tagList(
       div(class = "mb-2",
         actionButton("spatial_map_run", t("plot_run"), class = "btn-primary btn-sm",
-                     icon = icon("play"))),
-      if ((input$spatial_map_run %||% 0) == 0) {
-        run_hint_ui()
-      } else if (requireNamespace("plotly", quietly = TRUE)) {
+                     icon = icon("play")),
+        span(class = "text-muted small ms-2", t("plot_run_hint"))),
+      if (requireNamespace("plotly", quietly = TRUE)) {
         plotly::plotlyOutput("spatial_plotly", height = act_h(), width = act_w())
       } else {
         plotOutput("spatial_plot", height = act_h(), width = act_w())
@@ -3682,19 +3683,21 @@ server <- function(input, output, session) {
     )
   })
 
-  # マップ描画は「描画」ボタン押下時のみ計算（大規模データの自動再描画を防止）。
-  # 表示パラメータも押下時点の値をスナップショットして固定する。
-  spatial_map_spec <- eventReactive(input$spatial_map_run, {
-    list(pr = spatial_prep(),
-         pt_sz = input$spatial_pt %||% 0.8,
-         flip = isTRUE(input$spatial_flip),
-         colorvar = spatial_colorvar(),
-         highlight = input$spatial_highlight,
-         hl_alpha = input$spatial_hl_alpha %||% 1,
-         hl_size = input$spatial_hl_size %||% 1.2,
-         other_alpha = input$spatial_other_alpha %||% 0.3,
-         other_size = input$spatial_other_size %||% 0.6)
+  # 「描画」ボタン押下時に、その時点の設定をスナップショットして保存。
+  spatial_map_spec_v <- reactiveVal(NULL)
+  observeEvent(input$spatial_map_run, {
+    spatial_map_spec_v(list(
+      pr = spatial_prep(),
+      pt_sz = input$spatial_pt %||% 0.8,
+      flip = isTRUE(input$spatial_flip),
+      colorvar = spatial_colorvar(),
+      highlight = input$spatial_highlight,
+      hl_alpha = input$spatial_hl_alpha %||% 1,
+      hl_size = input$spatial_hl_size %||% 1.2,
+      other_alpha = input$spatial_other_alpha %||% 0.3,
+      other_size = input$spatial_other_size %||% 0.6))
   }, ignoreInit = TRUE)
+  spatial_map_spec <- reactive({ req(spatial_map_spec_v()) })
 
   # 色分けに使う名前（メタデータ変数名 or 遺伝子名）
   spatial_colorvar <- reactive({
