@@ -90,6 +90,13 @@ Spatial **Neighborhood / Co-occurrence / Neighbors-enrichment** analyses;
 `msigdbr`+`fgsea` drive the **GSEA** sub-tab and `httr`+`jsonlite` the **Enrichr**
 links. The Heatmap is drawn with plain `ggplot2` (no `pheatmap` needed).
 
+The heaviest analyses use multiple cores when available — the Neighbors-
+enrichment permutation test runs via `parallel::mclapply` and `fgsea` via its
+`nproc` — and stay **reproducible regardless of core count** (each iteration is
+seeded independently). Set the environment variable `SHINY_VIZ_THREADS` to
+override the thread count (default = cores − 1, capped at 8; forking falls back
+to serial on Windows).
+
 ---
 
 ## Quick start (with the included test data)
