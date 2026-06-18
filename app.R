@@ -588,6 +588,8 @@ i18n <- list(
     niche_cl_file     = "細胞アノテーションファイル (任意)",
     niche_load        = "ファイルを読み込む",
     niche_loading     = "niche データを読み込み中...",
+    niche_linking     = "tile_id を補完中(clusters_meta と照合)...",
+    niche_no_tileid   = "細胞アノテーションファイルに tile_id が無く、tessera の clusters_meta とも照合できませんでした。niche マップは表示できますが、構成比は計算できません。",
     niche_loaded      = "✅ 読み込み完了: タイル %s 個 / サンプル %s 件%s",
     niche_loaded_cells= " / 細胞 %s 個",
     niche_not_df      = "選択ファイルが想定形式(data.frame)ではありません。",
@@ -844,6 +846,8 @@ i18n <- list(
     niche_cl_file     = "Cell annotation file (optional)",
     niche_load        = "Load files",
     niche_loading     = "Loading niche data...",
+    niche_linking     = "Linking tile_id (matching against clusters_meta)...",
+    niche_no_tileid   = "The cell annotation file has no tile_id and could not be matched to a tessera clusters_meta. The niche map still works, but composition cannot be computed.",
     niche_loaded      = "✅ Loaded: %s tiles / %s samples%s",
     niche_loaded_cells= " / %s cells",
     niche_not_df      = "The selected file is not in the expected format (data.frame).",
@@ -4796,9 +4800,13 @@ server <- function(input, output, session) {
   output$niche_panel_ui <- renderUI({
     lang <- input$lang
     td <- niche_tile()
-    # ファイル名のデフォルト(tile_meta / clusters_meta を含むもの)
-    tile_default  <- grep("tile_meta",     rds_files, value = TRUE)[1] %||% rds_files[1]
-    cells_default <- grep("clusters_meta", rds_files, value = TRUE)[1] %||% ""
+    # ファイル名のデフォルト(tile_meta = タイル / 細胞アノテーションは
+    # Merged_ST_fine_cell_type_meta.rds を優先、無ければ *clusters_meta*)
+    tile_default  <- grep("tile_meta", rds_files, value = TRUE)[1] %||% rds_files[1]
+    cells_default <- if ("Merged_ST_fine_cell_type_meta.rds" %in% rds_files)
+                       "Merged_ST_fine_cell_type_meta.rds"
+                     else grep("^Merged_ST_fine_cell_type.*meta\\.rds$", rds_files, value = TRUE)[1] %||%
+                          grep("clusters_meta", rds_files, value = TRUE)[1] %||% ""
     tagList(
       div(class = "alert alert-secondary py-2 small mb-2", icon("circle-info"), " ", t("niche_help")),
       div(class = "card mb-3", div(class = "card-body",
@@ -4899,11 +4907,36 @@ server <- function(input, output, session) {
         if (!is.null(input$niche_cl_path) && nzchar(input$niche_cl_path)) {
           cp <- file.path(app_dir, input$niche_cl_path)
           cells <- readRDS(cp)
-          if (is.data.frame(cells) && all(c("tile_id") %in% names(cells))) {
-            niche_cells(cells)
+          if (!is.data.frame(cells)) {
+            niche_cells(NULL); showNotification(t("niche_not_df"), type = "warning")
           } else {
-            niche_cells(NULL)
-            showNotification(t("niche_not_df"), type = "warning")
+            # tile_id が無い注釈ファイルは、tessera の *clusters_meta* から
+            # 行名(または cell_id)一致で tile_id を補完する
+            if (!("tile_id" %in% names(cells))) {
+              setProgress(message = t("niche_linking"))
+              link_files <- setdiff(grep("clusters_meta", rds_files, value = TRUE),
+                                    input$niche_cl_path)
+              for (lf in link_files) {
+                link <- tryCatch(readRDS(file.path(app_dir, lf)), error = function(e) NULL)
+                if (is.data.frame(link) && "tile_id" %in% names(link)) {
+                  if (nrow(link) == nrow(cells) &&
+                      identical(rownames(link), rownames(cells))) {
+                    cells$tile_id <- link$tile_id
+                  } else if ("cell_id" %in% names(link) && "cell_id" %in% names(cells)) {
+                    cells$tile_id <- link$tile_id[match(as.character(cells$cell_id),
+                                                        as.character(link$cell_id))]
+                  }
+                }
+                rm(link); gc(verbose = FALSE)
+                if ("tile_id" %in% names(cells) && any(!is.na(cells$tile_id))) break
+              }
+            }
+            if ("tile_id" %in% names(cells) && any(!is.na(cells$tile_id))) {
+              niche_cells(cells)
+            } else {
+              niche_cells(NULL)
+              showNotification(t("niche_no_tileid"), type = "warning", duration = 12)
+            }
           }
         } else {
           niche_cells(NULL)
@@ -5016,9 +5049,11 @@ server <- function(input, output, session) {
                   "No cell-type column in the cell file."))
     niche_of <- setNames(as.character(td[[var]]), as.character(td$id))
     cc <- cells
-    if ((input$niche_comp_scope %||% "sample") == "sample" && !is.null(input$niche_sample) &&
-        "sample_id" %in% names(cc)) {
-      cc <- cc[as.character(cc$sample_id) == input$niche_sample, , drop = FALSE]
+    # サンプル絞り込みは tile_id の所属(tile_meta 側の sample_id)で行う。
+    # 注釈ファイルの sample_id 命名がタイル側と異なっていても正しく動く。
+    if ((input$niche_comp_scope %||% "sample") == "sample" && !is.null(input$niche_sample)) {
+      tiles_in_sample <- as.character(td$id[as.character(td$sample_id) == input$niche_sample])
+      cc <- cc[as.character(cc$tile_id) %in% tiles_in_sample, , drop = FALSE]
     }
     req(nrow(cc) > 0)
     niche <- niche_of[as.character(cc$tile_id)]
