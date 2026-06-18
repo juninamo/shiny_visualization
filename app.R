@@ -4871,7 +4871,10 @@ server <- function(input, output, session) {
                 column(2, div(style = "margin-top: 24px;",
                   downloadButton("niche_dl", t("niche_dl"), class = "btn-outline-success btn-sm")))
               ),
-              plotOutput("niche_comp_plot", height = act_h(), width = act_w())
+              if (requireNamespace("plotly", quietly = TRUE))
+                plotly::plotlyOutput("niche_comp_plotly", height = act_h(), width = act_w())
+              else
+                plotOutput("niche_comp_plot", height = act_h(), width = act_w())
             )
           }
         )
@@ -5065,27 +5068,40 @@ server <- function(input, output, session) {
     m[intersect(ro, rownames(m)), , drop = FALSE]
   })
 
-  output$niche_comp_plot <- renderPlot({
+  # 構成比ヒートマップの ggplot を構築（plotly/静的の両方で共有）。
+  # x軸ラベルは垂直(90°)、ホバーで割合(%)を表示する。
+  niche_comp_ggplot <- reactive({
     m <- niche_comp_mat(); req(nrow(m) > 0, ncol(m) > 0)
     pt <- plot_theme()
     prop <- sweep(m, 1, pmax(1, rowSums(m)), "/")   # 各 niche を 1 に正規化
     co <- if (ncol(prop) > 2) colnames(prop)[stats::hclust(stats::dist(base::t(prop)))$order] else colnames(prop)
+    nv <- var_label_niche(); cv <- input$niche_ct_col %||% "cell type"
     df <- data.frame(
       niche = factor(rep(rownames(prop), times = ncol(prop)), levels = rev(rownames(prop))),
       ct    = factor(rep(colnames(prop), each = nrow(prop)), levels = co),
       val   = as.vector(prop), stringsAsFactors = FALSE)
-    ggplot(df, aes(x = ct, y = niche, fill = val)) +
+    df$text <- paste0(nv, ": ", df$niche, "<br>", cv, ": ", df$ct,
+                      "<br>", sprintf("%.1f%%", df$val * 100))
+    ggplot(df, aes(x = ct, y = niche, fill = val, text = text)) +
       geom_tile(color = "grey85", linewidth = 0.2) +
       scale_fill_gradientn(colors = c("#F7F7F7", "#FDB863", "#BC3C29FF"), name = "prop") +
-      labs(x = NULL, y = var_label_niche(), title = t("niche_comp_title")) +
+      labs(x = NULL, y = nv, title = t("niche_comp_title")) +
       theme_minimal(base_size = 11) +
-      theme(axis.text.x = element_text(angle = 45, hjust = 1, size = 9),
+      theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5, size = 9),
             axis.text.y = element_text(size = 8), panel.grid = element_blank(),
             plot.background = element_rect(fill = pt$bg, color = NA),
             panel.background = element_rect(fill = pt$bg, color = NA),
             text = element_text(color = pt$fg), axis.text = element_text(color = pt$fg2),
             plot.title = element_text(size = 13, face = "bold", color = pt$accent))
-  }, bg = "transparent")
+  })
+
+  output$niche_comp_plot <- renderPlot({ suppressWarnings(print(niche_comp_ggplot())) }, bg = "transparent")
+
+  if (requireNamespace("plotly", quietly = TRUE)) {
+    output$niche_comp_plotly <- plotly::renderPlotly({
+      suppressWarnings(plotly::ggplotly(niche_comp_ggplot(), tooltip = "text"))
+    })
+  }
 
   var_label_niche <- reactive({ input$niche_var %||% "niche" })
 
