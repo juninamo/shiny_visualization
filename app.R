@@ -606,7 +606,8 @@ i18n <- list(
     niche_comp_sample = "表示中サンプルのみ",
     niche_comp_all    = "全サンプル",
     niche_comp_need   = "細胞アノテーションファイル(clusters_meta)を読み込むと、各 niche の細胞型構成を表示できます。",
-    niche_comp_nact   = "選択中のサンプルには細胞型(ct)アノテーションがありません。別のサンプルを選ぶか、集計範囲を「全サンプル」にしてください。",
+    niche_ct_col      = "細胞種の列",
+    niche_comp_nact   = "選択中のサンプルには細胞型アノテーションがありません。別のサンプルを選ぶか、集計範囲を「全サンプル」にしてください。",
     niche_comp_run    = "構成比を計算",
     niche_dl          = "Niche×細胞型 構成表をCSVで保存",
     niche_count       = "count",
@@ -861,7 +862,8 @@ i18n <- list(
     niche_comp_sample = "Displayed sample only",
     niche_comp_all    = "All samples",
     niche_comp_need   = "Load the cell annotation file (clusters_meta) to see the cell-type composition of each niche.",
-    niche_comp_nact   = "The selected sample has no cell-type (ct) annotation. Pick another sample, or set the scope to 'All samples'.",
+    niche_ct_col      = "Cell-type column",
+    niche_comp_nact   = "The selected sample has no cell-type annotation. Pick another sample, or set the scope to 'All samples'.",
     niche_comp_run    = "Compute composition",
     niche_dl          = "Download niche × cell-type table (CSV)",
     niche_count       = "count",
@@ -4772,6 +4774,25 @@ server <- function(input, output, session) {
     c(pref, setdiff(out, pref))
   }
 
+  # clusters_meta から「細胞種(アノテーション)」候補列を抽出する
+  niche_ct_choices <- function(cells) {
+    if (is.null(cells)) return(character(0))
+    drop <- c("tile_id", "sample_id", "sample_id_full", "barcode", "cell", "cell_id",
+              "orig.ident", "x", "y", "z", "PatientID", "donor", "slide", "patho_id",
+              "study", "site", "group", "others")
+    cand <- setdiff(names(cells), drop)
+    keep <- vapply(cand, function(cn) {
+      v <- cells[[cn]]
+      if (is.list(v)) return(FALSE)
+      nu <- length(unique(v))
+      (is.factor(v) || is.character(v) || is.numeric(v)) && nu >= 2 && nu <= 200
+    }, logical(1))
+    out <- cand[keep]
+    pref <- intersect(c("ct", "cell_type", "celltype", "anno_clusters",
+                        "predicted_cluster", "spatial_cluster"), out)
+    c(pref, setdiff(out, pref))
+  }
+
   output$niche_panel_ui <- renderUI({
     lang <- input$lang
     td <- niche_tile()
@@ -4818,22 +4839,28 @@ server <- function(input, output, session) {
                          icon = icon("draw-polygon"))
           )),
           h6(class = "text-primary", t("niche_map_title")),
-          plotOutput("niche_map", height = act_h(), width = act_w()),
+          if (requireNamespace("plotly", quietly = TRUE))
+            plotly::plotlyOutput("niche_map_plotly", height = act_h(), width = act_w())
+          else
+            plotOutput("niche_map", height = act_h(), width = act_w()),
           hr(),
           h6(class = "text-primary", t("niche_comp_title")),
           if (is.null(niche_cells())) {
             div(class = "alert alert-light py-2 small", icon("circle-info"), " ", t("niche_comp_need"))
           } else {
+            ct_choices <- niche_ct_choices(niche_cells())
             tagList(
               fluidRow(
-                column(5, radioButtons("niche_comp_scope", t("niche_comp_scope"),
+                column(4, selectInput("niche_ct_col", t("niche_ct_col"), choices = ct_choices,
+                                      selected = isolate(input$niche_ct_col) %||% ct_choices[1])),
+                column(4, radioButtons("niche_comp_scope", t("niche_comp_scope"),
                           choices = c(setNames("sample", t("niche_comp_sample")),
                                       setNames("all", t("niche_comp_all"))),
                           selected = isolate(input$niche_comp_scope) %||% "sample", inline = TRUE)),
-                column(4, div(style = "margin-top: 24px;",
+                column(2, div(style = "margin-top: 24px;",
                   actionButton("niche_comp_run", t("niche_comp_run"), class = "btn-outline-primary btn-sm",
                                icon = icon("table-cells")))),
-                column(3, div(style = "margin-top: 24px;",
+                column(2, div(style = "margin-top: 24px;",
                   downloadButton("niche_dl", t("niche_dl"), class = "btn-outline-success btn-sm")))
               ),
               plotOutput("niche_comp_plot", height = act_h(), width = act_w())
@@ -4927,13 +4954,17 @@ server <- function(input, output, session) {
     do.call(rbind, parts)
   }
 
-  output$niche_map <- renderPlot({
+  # niche マップの ggplot を構築（plotly/静的の両方で共有）。
+  # カーソルを合わせると niche(seurat_cluster)が出るよう text を持たせ、
+  # Y反転はデータ側で行う(plotly でも確実に効くように)。
+  niche_map_ggplot <- reactive({
     spec <- niche_plot_spec(); td <- niche_tile(); req(spec, td)
     var <- spec$var; req(var %in% names(td))
     if (!requireNamespace("sf", quietly = TRUE)) {
       stop("Package 'sf' is required to draw niche polygons.")
     }
     df <- niche_poly_df(td, spec$sample, var); req(!is.null(df), nrow(df) > 0)
+    if (isTRUE(spec$flip)) df$y <- -df$y
     pt <- plot_theme()
     levs <- cluster_level_order(df$niche)
     hl <- spec$highlight
@@ -4947,8 +4978,9 @@ server <- function(input, output, session) {
       df$fillv <- factor(df$niche, levels = levs)
       pal <- full_pal
     }
+    df$text <- paste0(var, ": ", df$niche)
     border <- if (isTRUE(input$dark_mode == "dark")) "#1b1f24" else "white"
-    p <- ggplot(df, aes(x = x, y = y, group = grp, fill = fillv)) +
+    ggplot(df, aes(x = x, y = y, group = grp, fill = fillv, text = text)) +
       geom_polygon(color = border, linewidth = spec$lwd %||% 0.1) +
       scale_fill_manual(values = pal, name = var, drop = FALSE) +
       coord_equal(expand = FALSE) +
@@ -4963,16 +4995,25 @@ server <- function(input, output, session) {
         legend.key.size = grid::unit(0.8, "lines"),
         plot.title = element_text(size = 14, face = "bold", color = pt$accent)) +
       guides(fill = guide_legend(override.aes = list(color = NA), ncol = 1))
-    if (isTRUE(spec$flip)) p <- p + scale_y_reverse()
-    p
-  }, bg = "transparent")
+  })
+
+  output$niche_map <- renderPlot({ suppressWarnings(print(niche_map_ggplot())) }, bg = "transparent")
+
+  if (requireNamespace("plotly", quietly = TRUE)) {
+    output$niche_map_plotly <- plotly::renderPlotly({
+      p <- niche_map_ggplot()
+      gp <- suppressWarnings(plotly::ggplotly(p, tooltip = "text"))
+      suppressWarnings(plotly::layout(gp, yaxis = list(scaleanchor = "x", scaleratio = 1)))
+    })
+  }
 
   # --- Niche × 細胞型 (ct) 構成 ---
   niche_comp_mat <- eventReactive(input$niche_comp_run, {
     cells <- niche_cells(); td <- niche_tile(); req(cells, td)
     var <- input$niche_var %||% niche_var_choices(td)[1]; req(var %in% names(td))
-    ct_col <- intersect(c("ct", "cell_type", "celltype"), names(cells))[1]
-    validate(need(!is.na(ct_col), "No cell-type column (ct) in the cell file."))
+    ct_col <- input$niche_ct_col %||% niche_ct_choices(cells)[1]
+    validate(need(!is.null(ct_col) && ct_col %in% names(cells),
+                  "No cell-type column in the cell file."))
     niche_of <- setNames(as.character(td[[var]]), as.character(td$id))
     cc <- cells
     if ((input$niche_comp_scope %||% "sample") == "sample" && !is.null(input$niche_sample) &&
