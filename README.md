@@ -19,6 +19,7 @@ feature immediately.
 | 🧱 **Composition** | Stacked proportion bar plot (e.g. cluster composition per donor), with optional **nested faceting** by additional variables (e.g. `site` + `study`). |
 | 🗺️ **Spatial** | Plot cells at their tissue x/y coordinates, colored by any metadata variable (categorical → lineage palette, numeric → viridis) **or by a single gene's expression** (viridis), with a **sample** picker to focus on / facet specific tissue sections. If the object has **segmentation** (cell-boundary polygons in @images), a toggle draws filled cell shapes instead of points. You can **highlight selected clusters** (others greyed) and, in a **Neighborhood** sub-tab, plot the nearest-neighbor distance ECDF from the selected clusters to every other cluster (x = distance, log scale; y = cumulative fraction; mean+/-SD band across samples) — closer clusters' curves sit further left; hover a line to see which cluster. Two more sub-tabs reproduce squidpy-style analyses: **Co-occurrence** (P(j \| i,d)/P(j) vs distance, per-sample CI) and **Neighbors enrichment** (permutation z-score matrix on a spatial kNN graph). Pick which loaded dataset to plot from the sidebar. Works on objects that keep coordinates in meta.data (x/y) or in @images. |
 | 🧭 **Azimuth** | Automated cell-type annotation with **Pan-Human Azimuth** via **CloudAzimuth** (`AzimuthAPI::CloudAzimuth`). One click sends the active dataset's expression to the satijalab cloud server and returns `azimuth_broad/medium/fine` labels. Shows a UMAP of predicted labels, a summary table (counts + mean confidence), a CSV download, and a **cluster × Azimuth correspondence** heatmap + CSV (cross-tabulate any metadata cluster column against the Azimuth labels, row/column-normalized). *Note: data is sent to an external cloud service.* |
+| 🧩 **Niche** | Visualize spatial **niches identified by [tessera](https://github.com/JEFworks-Lab/tessera)**. This tab loads its **own** files (the niche data are plain `data.frame`s, not Seurat objects): a **tile_meta** `.rds` (one `sf` polygon per niche tile + a niche-cluster column such as `seurat_clusters`) and, optionally, a **clusters_meta** `.rds` (per-cell annotations with `tile_id` + cell type `ct`). Pick a **sample** and a **niche variable**, and the tiles are drawn as filled polygons colored by niche (with optional **niche highlighting** and Y-flip). If the cell-annotation file is loaded, a **niche × cell-type composition** heatmap (each niche row-normalized) + **CSV** shows what cell types make up each niche, for the displayed sample or across all samples. Samples without `ct` annotation still draw the map and show a clear message for the composition. |
 | 🔥 **Heatmap / Dot** | One tab with shared gene/cluster controls and three inner sub-tabs: a **Heatmap** (mean-expression, optional per-gene Z-scoring and row/column clustering) and a **Dot Plot** (dot size = % expressing, color = scaled mean, optional marker-group facets), and a **Sub-cluster** sub-tab for iterative drill-down (re-cluster selected clusters into nested names, then re-plot + re-correlate vs the reference). With a reference, both plots have a **Combine** mode; the Dot Plot's combine also outputs a **correspondence table** (each active cluster → nearest reference by expression correlation, with a confidence *margin*) that you can **download as CSV**. |
 
 ### Highlights
@@ -76,7 +77,7 @@ feature immediately.
 ```r
 install.packages(c("shiny", "bslib", "ggplot2", "DT", "ggrepel",
                    "ggh4x", "plotly", "patchwork", "ggnewscale",
-                   "FNN", "RANN", "msigdbr", "httr", "jsonlite"))
+                   "FNN", "RANN", "msigdbr", "httr", "jsonlite", "sf"))
 # Seurat (and its dependency Matrix):
 install.packages("Seurat")
 # fgsea (Bioconductor) for the GSEA tab:
@@ -91,7 +92,8 @@ interactive plots (falls back to static); `patchwork`/`ggnewscale` lay out the
 side-by-side comparison and the dataset color bar; `FNN`/`RANN` are used by the
 Spatial **Neighborhood / Co-occurrence / Neighbors-enrichment** analyses;
 `msigdbr`+`fgsea` drive the **GSEA** sub-tab and `httr`+`jsonlite` the **Enrichr**
-links. The Heatmap is drawn with plain `ggplot2` (no `pheatmap` needed).
+links; `sf` is required by the **Niche** tab to draw the tessera niche polygons.
+The Heatmap is drawn with plain `ggplot2` (no `pheatmap` needed).
 
 The heaviest analyses use multiple cores when available — the Neighbors-
 enrichment permutation test runs via `parallel::mclapply` and `fgsea` via its

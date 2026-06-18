@@ -56,6 +56,28 @@ lineage_color_ramp <- function(category, n) {
   rep("grey60", n)
 }
 
+# niche のような多数(かつ「数字_系統」形式でない)カテゴリ用の、はっきり
+# 区別できる定性的カラーパレット。名前付きベクトルを返す。
+# 「数字_系統」形式なら系統グラデーション(generate_cluster_colors)に委譲する。
+niche_color_palette <- function(levs) {
+  levs <- as.character(unique(levs))
+  levs <- levs[!is.na(levs) & levs != "NA"]
+  if (length(levs) == 0) return(setNames(character(0), character(0)))
+  if (!is.null(lineage_colors_or_null(levs))) return(generate_cluster_colors(levs))
+  n <- length(levs)
+  # 24色の区別しやすい定性パレットを基に、必要なら明度を変えて拡張する
+  base <- c("#E6194B","#3CB44B","#4363D8","#F58231","#911EB4","#42D4F4",
+            "#F032E6","#BFEF45","#FABED4","#469990","#DCBEFF","#9A6324",
+            "#800000","#AAFFC3","#808000","#FFD8B1","#000075","#A9A9A9",
+            "#FF6F00","#1B9E77","#D95F02","#7570B3","#E7298A","#66A61E")
+  if (n <= length(base)) {
+    cols <- base[seq_len(n)]
+  } else {
+    cols <- grDevices::colorRampPalette(base)(n)
+  }
+  setNames(cols, levs)
+}
+
 # 末尾の系統名を取り出す（"0_B_Plasma" -> "B_Plasma"）。
 # regmatches はマッチしない要素を取り除いて長さが変わるため、ここでは
 # マッチしない要素は "" にして必ず入力と同じ長さのベクトルを返す。
@@ -560,6 +582,36 @@ i18n <- list(
     az_corr_dl        = "対応表をCSVで保存",
     az_corr_help      = "選んだメタデータのクラスター列と Azimuth アノテーションのクロス集計です。各セルは細胞数(または行/列で正規化した割合)。行・列は階層クラスタリングで並べ替えます。",
 
+    # Niche (tessera)
+    niche_settings    = "Niche 表示設定 (tessera)",
+    niche_tile_file   = "タイル(niche polygon)ファイル",
+    niche_cl_file     = "細胞アノテーションファイル (任意)",
+    niche_load        = "ファイルを読み込む",
+    niche_loading     = "niche データを読み込み中...",
+    niche_loaded      = "✅ 読み込み完了: タイル %s 個 / サンプル %s 件%s",
+    niche_loaded_cells= " / 細胞 %s 個",
+    niche_not_df      = "選択ファイルが想定形式(data.frame)ではありません。",
+    niche_no_geom     = "タイルファイルにポリゴン情報(shape列)が見つかりません。",
+    niche_sample      = "サンプル",
+    niche_var         = "Niche 変数 (色分け)",
+    niche_highlight   = "強調する niche (任意・複数可)",
+    niche_flip        = "Y軸を反転",
+    niche_lwd         = "境界線の太さ",
+    niche_run         = "描画",
+    niche_placeholder = "ファイルを読み込み、サンプルを選んで「描画」を押してください",
+    niche_need_load   = "先に「ファイルを読み込む」を押してください。",
+    niche_map_title   = "Niche マップ",
+    niche_comp_title  = "Niche × 細胞型 (ct) 構成比",
+    niche_comp_scope  = "集計範囲",
+    niche_comp_sample = "表示中サンプルのみ",
+    niche_comp_all    = "全サンプル",
+    niche_comp_need   = "細胞アノテーションファイル(clusters_meta)を読み込むと、各 niche の細胞型構成を表示できます。",
+    niche_comp_nact   = "選択中のサンプルには細胞型(ct)アノテーションがありません。別のサンプルを選ぶか、集計範囲を「全サンプル」にしてください。",
+    niche_comp_run    = "構成比を計算",
+    niche_dl          = "Niche×細胞型 構成表をCSVで保存",
+    niche_count       = "count",
+    niche_help        = "tessera で同定した niche のタイル(ポリゴン)を、niche クラスター(色)ごとに空間上に描画します。タイルの位置・形状は tile_meta、細胞アノテーション(ct)は clusters_meta から読み込みます。細胞アノテーションも読み込むと、各 niche を構成する細胞型の割合(構成比ヒートマップ・CSV)も確認できます。",
+
     # プレースホルダ
     placeholder_load  = "\U0001F4C2 RDSファイルを選択して「読み込む」ボタンを押してください",
     placeholder_deg   = "上のパネルでグループを設定し「DEG解析を実行」ボタンを押してください",
@@ -785,6 +837,36 @@ i18n <- list(
     az_corr_dl        = "Download correspondence CSV",
     az_corr_help      = "Cross-tabulation of the chosen metadata cluster column and the Azimuth annotation. Each cell is the cell count (or a row/column-normalized proportion). Rows and columns are hierarchically clustered.",
 
+    # Niche (tessera)
+    niche_settings    = "Niche display settings (tessera)",
+    niche_tile_file   = "Tile (niche polygon) file",
+    niche_cl_file     = "Cell annotation file (optional)",
+    niche_load        = "Load files",
+    niche_loading     = "Loading niche data...",
+    niche_loaded      = "✅ Loaded: %s tiles / %s samples%s",
+    niche_loaded_cells= " / %s cells",
+    niche_not_df      = "The selected file is not in the expected format (data.frame).",
+    niche_no_geom     = "No polygon information (shape column) found in the tile file.",
+    niche_sample      = "Sample",
+    niche_var         = "Niche variable (color)",
+    niche_highlight   = "Highlight niche(s) (optional)",
+    niche_flip        = "Flip Y axis",
+    niche_lwd         = "Border width",
+    niche_run         = "Draw",
+    niche_placeholder = "Load files, pick a sample, and click 'Draw'",
+    niche_need_load   = "Click 'Load files' first.",
+    niche_map_title   = "Niche map",
+    niche_comp_title  = "Niche × cell type (ct) composition",
+    niche_comp_scope  = "Scope",
+    niche_comp_sample = "Displayed sample only",
+    niche_comp_all    = "All samples",
+    niche_comp_need   = "Load the cell annotation file (clusters_meta) to see the cell-type composition of each niche.",
+    niche_comp_nact   = "The selected sample has no cell-type (ct) annotation. Pick another sample, or set the scope to 'All samples'.",
+    niche_comp_run    = "Compute composition",
+    niche_dl          = "Download niche × cell-type table (CSV)",
+    niche_count       = "count",
+    niche_help        = "Draws the tiles (polygons) of niches identified by tessera, colored by niche cluster. Tile positions/shapes come from tile_meta and cell annotations (ct) from clusters_meta. If you also load the cell annotations, you can inspect the cell-type composition of each niche (heatmap + CSV).",
+
     # Placeholders
     placeholder_load  = "\U0001F4C2 Select an RDS file and click 'Load'",
     placeholder_deg   = "Configure groups above and click 'Run DEG Analysis'",
@@ -911,6 +993,16 @@ ui <- page_sidebar(
       card_body(
         class = "p-2",
         uiOutput("azimuth_panel_ui")
+      )
+    ),
+
+    # tessera で同定した niche のポリゴン表示（独立タブ・独自にファイルを読み込む）
+    nav_panel(
+      title = "\U0001F9E9 Niche",
+      value = "niche",
+      card_body(
+        class = "p-2",
+        uiOutput("niche_panel_ui")
       )
     )
   )
@@ -4650,6 +4742,282 @@ server <- function(input, output, session) {
     content = function(file) {
       m <- azimuth_corr_mat()
       out <- data.frame(cluster = rownames(m), m, check.names = FALSE, stringsAsFactors = FALSE)
+      utils::write.csv(out, file, row.names = FALSE)
+    }
+  )
+
+  # =========================================================================
+  # Niche タブ (tessera) — tile_meta / clusters_meta を独自に読み込み、
+  # niche のタイル(ポリゴン)を niche クラスター(色)ごとに描画する
+  # =========================================================================
+  niche_tile  <- reactiveVal(NULL)   # tile_meta: ポリゴン + niche クラスター (sf shape列)
+  niche_cells <- reactiveVal(NULL)   # clusters_meta: 細胞アノテーション (tile_id, ct)
+  niche_plot_spec <- reactiveVal(NULL)
+
+  # tile_meta から「niche 変数」候補(カテゴリ列)を抽出する
+  niche_var_choices <- function(td) {
+    if (is.null(td)) return(character(0))
+    drop <- c("shape", "geometry", "id", "X", "Y", "x", "y", "npts", "area",
+              "perimeter", "nCount_RNA", "nFeature_RNA", "orig.ident")
+    cand <- setdiff(names(td), drop)
+    keep <- vapply(cand, function(cn) {
+      v <- td[[cn]]
+      if (is.list(v)) return(FALSE)
+      is.factor(v) || is.character(v) ||
+        (is.numeric(v) && length(unique(v)) <= 80)
+    }, logical(1))
+    out <- cand[keep]
+    # niche クラスターらしい列を先頭へ
+    pref <- intersect(c("seurat_clusters", "RNA_snn_res.2"), out)
+    c(pref, setdiff(out, pref))
+  }
+
+  output$niche_panel_ui <- renderUI({
+    lang <- input$lang
+    td <- niche_tile()
+    # ファイル名のデフォルト(tile_meta / clusters_meta を含むもの)
+    tile_default  <- grep("tile_meta",     rds_files, value = TRUE)[1] %||% rds_files[1]
+    cells_default <- grep("clusters_meta", rds_files, value = TRUE)[1] %||% ""
+    tagList(
+      div(class = "alert alert-secondary py-2 small mb-2", icon("circle-info"), " ", t("niche_help")),
+      div(class = "card mb-3", div(class = "card-body",
+        h6(t("niche_settings"), class = "card-title text-primary"),
+        fluidRow(
+          column(5, selectInput("niche_tile_path", t("niche_tile_file"),
+                                choices = rds_files,
+                                selected = isolate(input$niche_tile_path) %||% tile_default)),
+          column(5, selectInput("niche_cl_path", t("niche_cl_file"),
+                                choices = c(setNames("", "—"), setNames(rds_files, rds_files)),
+                                selected = isolate(input$niche_cl_path) %||% cells_default)),
+          column(2, div(style = "margin-top: 30px;",
+            actionButton("niche_load", t("niche_load"), class = "btn-primary btn-sm",
+                         icon = icon("folder-open"))))
+        ),
+        uiOutput("niche_load_status")
+      )),
+      if (is.null(td)) {
+        div(class = "text-center text-muted py-4", h5(t("niche_placeholder")))
+      } else {
+        samples <- sort(unique(as.character(td$sample_id)))
+        vars <- niche_var_choices(td)
+        tagList(
+          div(class = "card mb-3", div(class = "card-body",
+            fluidRow(
+              column(4, selectInput("niche_sample", t("niche_sample"), choices = samples,
+                                    selected = isolate(input$niche_sample) %||% samples[1])),
+              column(4, selectInput("niche_var", t("niche_var"), choices = vars,
+                                    selected = isolate(input$niche_var) %||% vars[1])),
+              column(2, numericInput("niche_lwd", t("niche_lwd"), value = isolate(input$niche_lwd) %||% 0.1,
+                                     min = 0, max = 2, step = 0.05)),
+              column(2, div(style = "margin-top: 14px;",
+                checkboxInput("niche_flip", t("niche_flip"),
+                              value = isolate(input$niche_flip) %||% TRUE)))
+            ),
+            uiOutput("niche_highlight_ui"),
+            actionButton("niche_run", t("niche_run"), class = "btn-success",
+                         icon = icon("draw-polygon"))
+          )),
+          h6(class = "text-primary", t("niche_map_title")),
+          plotOutput("niche_map", height = act_h(), width = act_w()),
+          hr(),
+          h6(class = "text-primary", t("niche_comp_title")),
+          if (is.null(niche_cells())) {
+            div(class = "alert alert-light py-2 small", icon("circle-info"), " ", t("niche_comp_need"))
+          } else {
+            tagList(
+              fluidRow(
+                column(5, radioButtons("niche_comp_scope", t("niche_comp_scope"),
+                          choices = c(setNames("sample", t("niche_comp_sample")),
+                                      setNames("all", t("niche_comp_all"))),
+                          selected = isolate(input$niche_comp_scope) %||% "sample", inline = TRUE)),
+                column(4, div(style = "margin-top: 24px;",
+                  actionButton("niche_comp_run", t("niche_comp_run"), class = "btn-outline-primary btn-sm",
+                               icon = icon("table-cells")))),
+                column(3, div(style = "margin-top: 24px;",
+                  downloadButton("niche_dl", t("niche_dl"), class = "btn-outline-success btn-sm")))
+              ),
+              plotOutput("niche_comp_plot", height = act_h(), width = act_w())
+            )
+          }
+        )
+      }
+    )
+  })
+
+  output$niche_load_status <- renderUI({
+    td <- niche_tile(); if (is.null(td)) return(NULL)
+    cells <- niche_cells()
+    cell_txt <- if (!is.null(cells)) sprintf(t("niche_loaded_cells"),
+                                             format(nrow(cells), big.mark = ",")) else ""
+    div(class = "small text-success mt-1",
+        sprintf(t("niche_loaded"), format(nrow(td), big.mark = ","),
+                length(unique(td$sample_id)), cell_txt))
+  })
+
+  observeEvent(input$niche_load, {
+    req(input$niche_tile_path)
+    withProgress(message = t("niche_loading"), value = NULL, {
+      tryCatch({
+        tp <- file.path(app_dir, input$niche_tile_path)
+        td <- readRDS(tp)
+        if (!is.data.frame(td)) { showNotification(t("niche_not_df"), type = "error"); return() }
+        if (!("shape" %in% names(td)) && !("geometry" %in% names(td))) {
+          showNotification(t("niche_no_geom"), type = "error"); return()
+        }
+        if (!("shape" %in% names(td)) && "geometry" %in% names(td)) td$shape <- td$geometry
+        if (is.null(td$sample_id)) td$sample_id <- "sample1"
+        if (is.null(td$id)) td$id <- rownames(td)
+        niche_tile(td)
+        # 任意: 細胞アノテーション
+        if (!is.null(input$niche_cl_path) && nzchar(input$niche_cl_path)) {
+          cp <- file.path(app_dir, input$niche_cl_path)
+          cells <- readRDS(cp)
+          if (is.data.frame(cells) && all(c("tile_id") %in% names(cells))) {
+            niche_cells(cells)
+          } else {
+            niche_cells(NULL)
+            showNotification(t("niche_not_df"), type = "warning")
+          }
+        } else {
+          niche_cells(NULL)
+        }
+      }, error = function(e) {
+        showNotification(paste(t("notify_error"), conditionMessage(e)), type = "error", duration = 12)
+      })
+    })
+  })
+
+  # niche 変数のレベル(強調セレクタ用)
+  output$niche_highlight_ui <- renderUI({
+    td <- niche_tile(); req(td)
+    var <- input$niche_var %||% niche_var_choices(td)[1]; req(var %in% names(td))
+    levs <- cluster_level_order(td[[var]])
+    selectizeInput("niche_highlight", t("niche_highlight"), choices = levs,
+                   selected = isolate(input$niche_highlight),
+                   multiple = TRUE, options = list(placeholder = "(all)"))
+  })
+
+  observeEvent(input$niche_run, {
+    niche_plot_spec(list(
+      sample    = input$niche_sample,
+      var       = input$niche_var,
+      highlight = input$niche_highlight,
+      flip      = isTRUE(input$niche_flip),
+      lwd       = input$niche_lwd %||% 0.1
+    ))
+  })
+
+  # 選択サンプルのタイルをポリゴン座標に展開する
+  niche_poly_df <- function(td, smp, var) {
+    sub <- td[as.character(td$sample_id) == smp, , drop = FALSE]
+    if (nrow(sub) == 0) return(NULL)
+    shp <- sub$shape
+    parts <- lapply(seq_len(nrow(sub)), function(i) {
+      cc <- tryCatch(sf::st_coordinates(shp[[i]]), error = function(e) NULL)
+      if (is.null(cc) || nrow(cc) == 0) return(NULL)
+      L1 <- if ("L1" %in% colnames(cc)) cc[, "L1"] else 1
+      L2 <- if ("L2" %in% colnames(cc)) cc[, "L2"] else 1
+      L3 <- if ("L3" %in% colnames(cc)) cc[, "L3"] else 1
+      data.frame(
+        grp   = paste(i, L3, L2, L1, sep = "_"),
+        x     = cc[, "X"], y = cc[, "Y"],
+        niche = as.character(sub[[var]][i]),
+        stringsAsFactors = FALSE)
+    })
+    do.call(rbind, parts)
+  }
+
+  output$niche_map <- renderPlot({
+    spec <- niche_plot_spec(); td <- niche_tile(); req(spec, td)
+    var <- spec$var; req(var %in% names(td))
+    if (!requireNamespace("sf", quietly = TRUE)) {
+      stop("Package 'sf' is required to draw niche polygons.")
+    }
+    df <- niche_poly_df(td, spec$sample, var); req(!is.null(df), nrow(df) > 0)
+    pt <- plot_theme()
+    levs <- cluster_level_order(df$niche)
+    hl <- spec$highlight
+    full_pal <- niche_color_palette(levs)
+    if (length(hl)) {
+      df$fillv <- ifelse(df$niche %in% hl, df$niche, "·other")
+      keep_levs <- c(intersect(levs, hl), "·other")
+      pal <- c(full_pal[intersect(levs, hl)], "·other" = "grey85")
+      df$fillv <- factor(df$fillv, levels = keep_levs)
+    } else {
+      df$fillv <- factor(df$niche, levels = levs)
+      pal <- full_pal
+    }
+    border <- if (isTRUE(input$dark_mode == "dark")) "#1b1f24" else "white"
+    p <- ggplot(df, aes(x = x, y = y, group = grp, fill = fillv)) +
+      geom_polygon(color = border, linewidth = spec$lwd %||% 0.1) +
+      scale_fill_manual(values = pal, name = var, drop = FALSE) +
+      coord_equal(expand = FALSE) +
+      labs(title = spec$sample, x = NULL, y = NULL) +
+      theme_minimal(base_size = 12) +
+      theme(
+        plot.background = element_rect(fill = pt$bg, color = NA),
+        panel.background = element_rect(fill = pt$bg, color = NA),
+        text = element_text(color = pt$fg), axis.text = element_text(color = pt$fg2),
+        panel.grid = element_blank(),
+        legend.position = if (nlevels(df$fillv) > 44) "none" else "right",
+        legend.key.size = grid::unit(0.8, "lines"),
+        plot.title = element_text(size = 14, face = "bold", color = pt$accent)) +
+      guides(fill = guide_legend(override.aes = list(color = NA), ncol = 1))
+    if (isTRUE(spec$flip)) p <- p + scale_y_reverse()
+    p
+  }, bg = "transparent")
+
+  # --- Niche × 細胞型 (ct) 構成 ---
+  niche_comp_mat <- eventReactive(input$niche_comp_run, {
+    cells <- niche_cells(); td <- niche_tile(); req(cells, td)
+    var <- input$niche_var %||% niche_var_choices(td)[1]; req(var %in% names(td))
+    ct_col <- intersect(c("ct", "cell_type", "celltype"), names(cells))[1]
+    validate(need(!is.na(ct_col), "No cell-type column (ct) in the cell file."))
+    niche_of <- setNames(as.character(td[[var]]), as.character(td$id))
+    cc <- cells
+    if ((input$niche_comp_scope %||% "sample") == "sample" && !is.null(input$niche_sample) &&
+        "sample_id" %in% names(cc)) {
+      cc <- cc[as.character(cc$sample_id) == input$niche_sample, , drop = FALSE]
+    }
+    req(nrow(cc) > 0)
+    niche <- niche_of[as.character(cc$tile_id)]
+    ctv <- as.character(cc[[ct_col]])
+    keep <- !is.na(niche) & !is.na(ctv)
+    validate(need(any(keep), t("niche_comp_nact")))
+    m <- as.matrix(table(niche = niche[keep], ct = ctv[keep]))
+    ro <- cluster_level_order(rownames(m))
+    m[intersect(ro, rownames(m)), , drop = FALSE]
+  })
+
+  output$niche_comp_plot <- renderPlot({
+    m <- niche_comp_mat(); req(nrow(m) > 0, ncol(m) > 0)
+    pt <- plot_theme()
+    prop <- sweep(m, 1, pmax(1, rowSums(m)), "/")   # 各 niche を 1 に正規化
+    co <- if (ncol(prop) > 2) colnames(prop)[stats::hclust(stats::dist(base::t(prop)))$order] else colnames(prop)
+    df <- data.frame(
+      niche = factor(rep(rownames(prop), times = ncol(prop)), levels = rev(rownames(prop))),
+      ct    = factor(rep(colnames(prop), each = nrow(prop)), levels = co),
+      val   = as.vector(prop), stringsAsFactors = FALSE)
+    ggplot(df, aes(x = ct, y = niche, fill = val)) +
+      geom_tile(color = "grey85", linewidth = 0.2) +
+      scale_fill_gradientn(colors = c("#F7F7F7", "#FDB863", "#BC3C29FF"), name = "prop") +
+      labs(x = NULL, y = var_label_niche(), title = t("niche_comp_title")) +
+      theme_minimal(base_size = 11) +
+      theme(axis.text.x = element_text(angle = 45, hjust = 1, size = 9),
+            axis.text.y = element_text(size = 8), panel.grid = element_blank(),
+            plot.background = element_rect(fill = pt$bg, color = NA),
+            panel.background = element_rect(fill = pt$bg, color = NA),
+            text = element_text(color = pt$fg), axis.text = element_text(color = pt$fg2),
+            plot.title = element_text(size = 13, face = "bold", color = pt$accent))
+  }, bg = "transparent")
+
+  var_label_niche <- reactive({ input$niche_var %||% "niche" })
+
+  output$niche_dl <- downloadHandler(
+    filename = function() "niche_vs_celltype_composition.csv",
+    content = function(file) {
+      m <- niche_comp_mat()
+      out <- data.frame(niche = rownames(m), m, check.names = FALSE, stringsAsFactors = FALSE)
       utils::write.csv(out, file, row.names = FALSE)
     }
   )
