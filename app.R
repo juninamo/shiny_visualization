@@ -361,6 +361,183 @@ spatial_segmentation <- function(obj) {
 }
 
 # =============================================================================
+# 解析内容の模式図（各タブの「解説」セクション用）。データ非依存・説明専用。
+# pt = plot_theme() の配色, lang = 言語。
+# =============================================================================
+.dg_cols <- c(A = "#DC0000FF", B = "#00A087FF", C = "#3C5488FF")
+
+.dg_base <- function(pt, axes = TRUE) {
+  th <- theme_minimal(base_size = 10) + theme(
+    plot.background = element_rect(fill = pt$bg, color = NA),
+    panel.background = element_rect(fill = pt$bg, color = NA),
+    panel.grid = element_blank(),
+    plot.title = element_text(color = pt$accent, face = "bold", size = 9.5),
+    legend.position = "none",
+    text = element_text(color = pt$fg),
+    axis.title = element_text(color = pt$fg2, size = 8),
+    axis.text = element_text(color = pt$fg2, size = 7))
+  if (!axes) th <- th + theme(axis.text = element_blank(), axis.title = element_blank())
+  th
+}
+.dg_legend <- function(pt) theme(legend.position = "right", legend.title = element_blank(),
+                                 legend.text = element_text(size = 7, color = pt$fg))
+.dg_combine <- function(plots, pt) {
+  if (length(plots) == 1) return(plots[[1]])
+  if (requireNamespace("patchwork", quietly = TRUE)) patchwork::wrap_plots(plots, nrow = 1)
+  else plots[[1]]
+}
+
+diagram_spatial_map <- function(pt, lang = "ja") {
+  L <- function(ja, en) if (identical(lang, "en")) en else ja
+  set.seed(3)
+  d <- data.frame(x = c(rnorm(20, 3, 1), rnorm(18, 7, 1), rnorm(15, 5, 1.2)),
+                  y = c(rnorm(20, 3, 1), rnorm(18, 4, 1), rnorm(15, 8, 1)),
+                  cl = rep(c("A", "B", "C"), c(20, 18, 15)))
+  ggplot(d, aes(x, y, color = cl)) + geom_point(size = 2.4) +
+    scale_color_manual(values = .dg_cols) + coord_equal() +
+    labs(title = L("細胞を組織の x/y 座標に配置（色 = メタデータ変数 または 遺伝子発現）",
+                   "Cells at tissue x/y coords (color = a metadata variable or gene expression)"),
+         x = NULL, y = NULL) + .dg_base(pt, axes = FALSE)
+}
+
+diagram_neighborhood <- function(pt, lang = "ja") {
+  L <- function(ja, en) if (identical(lang, "en")) en else ja
+  set.seed(7)
+  A <- data.frame(x = runif(12, 0, 10), y = runif(12, 0, 10))
+  B <- data.frame(x = rnorm(9, 7.5, 1), y = rnorm(9, 7, 1))
+  Cc <- data.frame(x = rnorm(7, 2, 0.8), y = rnorm(7, 2.5, 0.8))
+  nrst <- function(ax, ay, T) { i <- which.min((T$x - ax)^2 + (T$y - ay)^2); c(T$x[i], T$y[i]) }
+  seg <- do.call(rbind, lapply(seq_len(nrow(A)), function(i) {
+    p <- nrst(A$x[i], A$y[i], B); data.frame(x = A$x[i], y = A$y[i], xe = p[1], ye = p[2]) }))
+  p1 <- ggplot() +
+    geom_segment(data = seg, aes(x, y, xend = xe, yend = ye), color = pt$fg2,
+                 linewidth = 0.3, linetype = "dashed") +
+    geom_point(data = A, aes(x, y), color = .dg_cols["A"], size = 2.2) +
+    geom_point(data = B, aes(x, y), color = .dg_cols["B"], size = 2.2) +
+    geom_point(data = Cc, aes(x, y), color = .dg_cols["C"], size = 2.2) +
+    coord_equal() + labs(title = L("① A→最近接 B の距離", "① A→nearest-B distance"),
+                         x = NULL, y = NULL) + .dg_base(pt, axes = FALSE)
+  xs <- exp(seq(log(0.3), log(12), length.out = 120))
+  bnear <- L("B(近い)", "B(near)"); cfar <- L("C(遠い)", "C(far)")
+  ec <- rbind(data.frame(x = xs, y = pnorm(log(xs), log(1.6), 0.45), cl = bnear),
+              data.frame(x = xs, y = pnorm(log(xs), log(5.5), 0.45), cl = cfar))
+  p2 <- ggplot(ec, aes(x, y, color = cl)) + geom_line(linewidth = 0.9) + scale_x_log10() +
+    scale_color_manual(values = setNames(c(.dg_cols[["B"]], .dg_cols[["C"]]), c(bnear, cfar))) +
+    labs(title = L("② 距離の ECDF（左ほど近接）", "② distance ECDF (left = closer)"),
+         x = L("距離 (log)", "distance (log)"), y = L("累積割合", "cumulative")) +
+    .dg_base(pt) + .dg_legend(pt)
+  .dg_combine(list(p1, p2), pt)
+}
+
+diagram_cooccurrence <- function(pt, lang = "ja") {
+  L <- function(ja, en) if (identical(lang, "en")) en else ja
+  set.seed(5)
+  rings <- do.call(rbind, lapply(c(2, 4, 6), function(r) {
+    th <- seq(0, 2 * pi, length.out = 80); data.frame(x = r * cos(th), y = r * sin(th), r = factor(r)) }))
+  B <- data.frame(x = rnorm(14, 1.2, 1.5), y = rnorm(14, 0.4, 1.5))
+  Cc <- data.frame(x = runif(22, -6, 6), y = runif(22, -6, 6))
+  p1 <- ggplot() +
+    geom_path(data = rings, aes(x, y, group = r), color = pt$fg2, linewidth = 0.3) +
+    geom_point(data = Cc, aes(x, y), color = .dg_cols["C"], size = 1.8) +
+    geom_point(data = B, aes(x, y), color = .dg_cols["B"], size = 1.8) +
+    annotate("point", x = 0, y = 0, color = .dg_cols[["A"]], size = 4, shape = 18) +
+    coord_equal() + labs(title = L("① 中心 i の距離リングで j を数える",
+                                   "① count j in rings around i"), x = NULL, y = NULL) +
+    .dg_base(pt, axes = FALSE)
+  xs <- seq(1, 10, length.out = 100); benr <- L("B(集積)", "B(enriched)"); crnd <- L("C(無相関)", "C(random)")
+  rr <- rbind(data.frame(x = xs, y = 1 + 1.6 * exp(-(xs - 1) / 2), cl = benr),
+              data.frame(x = xs, y = rep(1, length(xs)), cl = crnd))
+  p2 <- ggplot(rr, aes(x, y, color = cl)) +
+    geom_hline(yintercept = 1, linetype = "dashed", color = pt$fg2, linewidth = 0.4) +
+    geom_line(linewidth = 0.9) +
+    scale_color_manual(values = setNames(c(.dg_cols[["B"]], .dg_cols[["C"]]), c(benr, crnd))) +
+    labs(title = L("② 比 P(j|i,d)/P(j)（>1: 集積）", "② ratio P(j|i,d)/P(j) (>1: enriched)"),
+         x = L("距離 d", "distance d"), y = L("比", "ratio")) +
+    .dg_base(pt) + .dg_legend(pt)
+  .dg_combine(list(p1, p2), pt)
+}
+
+diagram_ne <- function(pt, lang = "ja") {
+  L <- function(ja, en) if (identical(lang, "en")) en else ja
+  set.seed(11)
+  P <- rbind(data.frame(x = runif(16, 0, 10), y = runif(16, 0, 10), cl = "A"),
+             data.frame(x = rnorm(10, 7.5, 0.9), y = rnorm(10, 7.5, 0.9), cl = "B"))
+  co <- as.matrix(P[, c("x", "y")])
+  p1 <- ggplot()
+  if (requireNamespace("FNN", quietly = TRUE)) {
+    knn <- FNN::get.knn(co, k = 3)$nn.index
+    ed <- do.call(rbind, lapply(seq_len(nrow(P)), function(i)
+      data.frame(x = P$x[i], y = P$y[i], xe = co[knn[i, ], 1], ye = co[knn[i, ], 2])))
+    p1 <- p1 + geom_segment(data = ed, aes(x, y, xend = xe, yend = ye), color = pt$fg2,
+                            linewidth = 0.2, alpha = 0.5)
+  }
+  p1 <- p1 + geom_point(data = P, aes(x, y, color = cl), size = 2.2) +
+    scale_color_manual(values = .dg_cols) + coord_equal() +
+    labs(title = L("① kNN グラフ（A=まばら/B=密集）",
+                   "① kNN graph (A sparse/B clumped)"), x = NULL, y = NULL) +
+    .dg_base(pt, axes = FALSE)
+  mk_heat <- function(m, title) {
+    d <- expand.grid(i = c("A", "B"), j = c("A", "B")); d$z <- as.vector(m)
+    ggplot(d, aes(j, i, fill = z)) + geom_tile(color = "grey70", linewidth = 0.4) +
+      geom_text(aes(label = sprintf("%+.1f", z)), size = 3, color = "black") +
+      scale_fill_gradient2(low = "#3C5488FF", mid = "#F7F7F7", high = "#DC0000FF",
+                           midpoint = 0, limits = c(-3, 3), oob = scales::squish) +
+      scale_y_discrete(limits = rev) +
+      labs(title = title, x = L("列 j = 近傍", "col j = neighbor"),
+           y = L("行 i = 中心(from)", "row i = center(from)")) +
+      .dg_base(pt) + theme(axis.text = element_text(size = 8, color = pt$fg))
+  }
+  # 行=中心 i, 列=近傍 j。対称は z(A,B)=z(B,A)、方向ありは z(A→B)≠z(B→A)
+  sym <- matrix(c(2.5, -1.6, -1.6, 2.5), 2, byrow = TRUE)
+  dir <- matrix(c(2.5, -1.0, -2.6, 2.5), 2, byrow = TRUE)
+  hsym <- mk_heat(sym, L("② 対称 z(A,B)=z(B,A)", "② symmetric z(A,B)=z(B,A)"))
+  hdir <- mk_heat(dir, L("③ 方向あり z(A→B)≠z(B→A)", "③ directed z(A→B)≠z(B→A)"))
+  .dg_combine(list(p1, hsym, hdir), pt)
+}
+
+diagram_niche_map <- function(pt, lang = "ja") {
+  L <- function(ja, en) if (identical(lang, "en")) en else ja
+  set.seed(2)
+  g <- expand.grid(x = 1:9, y = 1:6)
+  g$niche <- with(g, ifelse(x <= 3 & y <= 3, "N1", ifelse(x > 6 & y > 3, "N2", ifelse(y > 4, "N3", "N4"))))
+  flip <- sample(nrow(g), 7); g$niche[flip] <- sample(c("N1", "N2", "N3", "N4"), 7, replace = TRUE)
+  ggplot(g, aes(x, y, fill = niche)) + geom_tile(color = "white", linewidth = 0.6) +
+    scale_fill_manual(values = c(N1 = "#E64B35FF", N2 = "#4DBBD5FF", N3 = "#00A087FF", N4 = "#3C5488FF")) +
+    coord_equal() +
+    labs(title = L("niche のタイル（領域）を niche クラスターで色分け",
+                   "niche tiles (regions) colored by niche cluster"), x = NULL, y = NULL) +
+    .dg_base(pt, axes = FALSE) + .dg_legend(pt)
+}
+
+diagram_niche_comp <- function(pt, lang = "ja") {
+  L <- function(ja, en) if (identical(lang, "en")) en else ja
+  set.seed(4)
+  cells <- data.frame(x = runif(40, 0, 5), y = runif(40, 0, 5),
+                      ct = sample(c("T", "B", "Mye"), 40, replace = TRUE, prob = c(.5, .3, .2)))
+  cc <- c(T = "#DC0000FF", B = "#00A087FF", Mye = "#3C5488FF")
+  p1 <- ggplot(cells, aes(x, y, color = ct)) +
+    annotate("rect", xmin = -0.3, xmax = 5.3, ymin = -0.3, ymax = 5.3, fill = NA,
+             color = pt$fg2, linewidth = 0.5, linetype = "dashed") +
+    geom_point(size = 2) + scale_color_manual(values = cc) + coord_equal() +
+    labs(title = L("① niche 内の細胞（cell type）", "① cells (cell type) in a niche"),
+         x = NULL, y = NULL) + .dg_base(pt, axes = FALSE)
+  comp <- as.data.frame(prop.table(table(cells$ct))); names(comp) <- c("ct", "p")
+  p2 <- ggplot(comp, aes(x = "niche", y = p, fill = ct)) + geom_col(width = 0.6, color = "white") +
+    scale_fill_manual(values = cc) +
+    labs(title = L("② 各 niche の細胞型構成比", "② cell-type composition per niche"),
+         x = NULL, y = L("割合", "proportion")) + .dg_base(pt) + .dg_legend(pt)
+  .dg_combine(list(p1, p2), pt)
+}
+
+# 折りたたみ式の「解説」セクション（図 + 説明文）を作る共通ヘルパー
+dg_section <- function(plot_id, title, desc, height = "230px") {
+  bslib::accordion(open = FALSE, class = "mb-2",
+    bslib::accordion_panel(title, icon = shiny::icon("circle-info"),
+      shiny::plotOutput(plot_id, height = height),
+      shiny::p(class = "small text-muted mt-2 mb-0", desc)))
+}
+
+# =============================================================================
 # 翻訳辞書
 # =============================================================================
 i18n <- list(
@@ -577,10 +754,20 @@ i18n <- list(
     spatial_ne_mode   = "集積の方向",
     spatial_ne_mode_sym = "対称（エッジ数・squidpy相当）",
     spatial_ne_mode_dir = "方向あり（行 i から見た 列 j）",
-    spatial_ne_axis_src = "中心クラスター i（from）",
-    spatial_ne_axis_nbr = "近傍クラスター j（around）",
+    spatial_ne_axis_src = "行 = 中心クラスター i（この細胞の周りを見る / from）",
+    spatial_ne_axis_nbr = "列 = 近傍クラスター j（周りに来る相手 / around）",
+    spatial_ne_axis_sym = "クラスター",
+    spatial_ne_sub_dir  = "読み方: 各行（中心 i）を横に見ると、その細胞の周りに集積/回避する近傍 j が分かります。z(i→j)≠z(j→i)。",
+    spatial_ne_sub_sym  = "対称指標のため行と列は交換可能（中心の区別なし）。z(A,B)=z(B,A)。方向を区別したい場合は上の「方向あり」を選んでください。",
     spatial_ne_help   = "squidpy の nhood_enrichment を参考にした指標です。各細胞の k 近傍で空間グラフを作り、クラスター間の隣接を、ラベルをrandom並べ替えた帰無分布と比較して z-score を計算します。正は予想より隣接、負は回避。\n【対称】無向エッジ数を数えるため z(A,B)=z(B,A) になります（squidpy と同じ。A から見た B と B から見た A を区別できません）。\n【方向あり】各細胞→その k 近傍の有向グラフで「中心クラスター i の細胞の近傍に 列 j がどれだけ来るか」を数えるので z(i→j)≠z(j→i) になり、非対称な集積を表せます（例: A はまばらで一部に B が密集、B は他に無い場合、B から見た A の集積は強いが A から見た B の集積は弱い、を区別できます）。同一サンプル内のみ。有意なペアにアスタリスク(z→両側p値→BH補正; *<0.05, **<0.01, ***<0.001)。行・列は階層クラスタリングで並べ替え（方向ありでは行・列を同じ順にして対角の対称位置で非対称を見比べられます）。",
     spatial_need_run  = "対象を選び「計算」ボタンを押してください。",
+    dg_title          = "📖 この解析について（図解）",
+    dg_map_d          = "各細胞を組織上の x/y 座標に点（またはセグメンテーション・ポリゴン）で配置し、メタデータ変数や遺伝子発現で色分けします。サンプルで絞り込めます。",
+    dg_nbr_d          = "対象クラスター(A)の各細胞から、他クラスターの最近接細胞までの距離を測り、その累積分布(ECDF)を描きます。曲線が左にあるほど A の近くにそのクラスターがいる＝近接、という見方です。サンプルごとに計算します。",
+    dg_co_d          = "中心クラスター i の各細胞を起点に、距離リングごとに別クラスター j が見つかる条件付き確率 P(j|i,d) を、全体での割合 P(j) で割った比を距離に対して描きます。1より大きいと i の周りに j が集積、1未満だと希薄を意味します。",
+    dg_ne_d          = "各細胞の k 近傍で空間グラフを作り、クラスター間の隣接の多さを、ラベルを並べ替えた帰無分布と比較して z-score にします。【対称】は無向エッジ数なので z(A,B)=z(B,A)（中心の区別なし）。【方向あり】は「行 i=中心クラスターの周りに 列 j がどれだけ来るか」を数えるので z(A→B)≠z(B→A) となり、非対称な集積を区別できます。ヒートマップは行＝中心 i（from）、列＝近傍 j（around）です。",
+    dg_niche_map_d   = "tessera が組織を区切って同定した各 niche のタイル（ポリゴン）を、niche クラスターで色分けして空間に描きます。",
+    dg_niche_comp_d  = "各 niche を構成する細胞型（cell type）の割合を集計し、niche × 細胞型のヒートマップにします。どの niche がどの細胞型でできているかが分かります。",
     az_settings       = "Pan-Human Azimuth (CloudAzimuth) アノテーション",
     az_run            = "CloudAzimuth を実行",
     az_running        = "CloudAzimuth でアノテーション中... (クラウドで計算、時間がかかります)",
@@ -855,10 +1042,20 @@ i18n <- list(
     spatial_ne_mode   = "Enrichment direction",
     spatial_ne_mode_sym = "Symmetric (edge count, ~squidpy)",
     spatial_ne_mode_dir = "Directed (row i → column j)",
-    spatial_ne_axis_src = "Center cluster i (from)",
-    spatial_ne_axis_nbr = "Neighbor cluster j (around)",
+    spatial_ne_axis_src = "row = center cluster i (look around its cells / from)",
+    spatial_ne_axis_nbr = "col = neighbor cluster j (what's around / around)",
+    spatial_ne_axis_sym = "cluster",
+    spatial_ne_sub_dir  = "How to read: scan across a row (center i) to see which neighbors j are enriched/avoided around that cluster's cells. z(i→j)≠z(j→i).",
+    spatial_ne_sub_sym  = "Symmetric measure — rows and columns are interchangeable (no center). z(A,B)=z(B,A). Choose 'Directed' above to distinguish direction.",
     spatial_ne_help   = "Inspired by squidpy's nhood_enrichment. Builds a spatial kNN graph and compares cluster adjacency to a permutation null (shuffled labels) as a z-score. Positive = more adjacent than expected, negative = avoidance.\n[Symmetric] counts UNDIRECTED edges, so z(A,B)=z(B,A) (same as squidpy; it cannot tell 'B around A' from 'A around B').\n[Directed] uses the directed each-cell→its-k-neighbors graph and counts how often column j appears in the neighborhood of center cluster i, so z(i→j) ≠ z(j→i) and asymmetric enrichment is captured (e.g. if A is sparse with B densely packed in one part and B occurs nowhere else, 'A around B' is strong while 'B around A' is weak). Within-sample edges only. Significant pairs marked with asterisks (z -> two-sided p -> BH; *<0.05, **<0.01, ***<0.001). Rows/cols are hierarchically clustered (in directed mode both axes share one order so you can compare reflections across the diagonal).",
     spatial_need_run  = "Select targets and click Compute.",
+    dg_title          = "📖 How this analysis works (illustrated)",
+    dg_map_d          = "Each cell is placed at its tissue x/y coordinates as a point (or a segmentation polygon), colored by a metadata variable or gene expression. You can subset by sample.",
+    dg_nbr_d          = "From each cell of a target cluster (A), measure the distance to the nearest cell of every other cluster and draw the cumulative distribution (ECDF). The further left a curve sits, the closer that cluster is to A. Computed per sample.",
+    dg_co_d          = "Starting from each cell of center cluster i, the conditional probability P(j|i,d) of finding another cluster j in each distance ring is divided by the overall fraction P(j), and plotted vs distance. >1 means j is enriched near i, <1 depleted.",
+    dg_ne_d          = "Builds a spatial kNN graph and turns cluster adjacency into a z-score vs a label-shuffled null. [Symmetric] counts undirected edges, so z(A,B)=z(B,A) (no notion of a center). [Directed] counts how often column j appears in the neighborhood of row i (the center cluster), so z(A→B)≠z(B→A) and asymmetric enrichment is distinguished. In the heatmap, rows = center i (from), columns = neighbor j (around).",
+    dg_niche_map_d   = "Draws each niche tile (polygon) — the tessellated regions tessera used to identify niches — colored by its niche cluster, in space.",
+    dg_niche_comp_d  = "Tallies the proportion of each cell type that makes up every niche, as a niche × cell-type heatmap, so you can see which cell types compose each niche.",
     az_settings       = "Pan-Human Azimuth (CloudAzimuth) annotation",
     az_run            = "Run CloudAzimuth",
     az_running        = "Annotating with CloudAzimuth... (cloud computation, can take a while)",
@@ -3873,6 +4070,14 @@ server <- function(input, output, session) {
     selectInput("spatial_ds", t("spatial_ds"), choices = nms, selected = sel)
   })
 
+  # --- 解説用の模式図（各タブ・各サブタブに配置） ---
+  output$dg_map        <- renderPlot({ suppressWarnings(print(diagram_spatial_map(plot_theme(), input$lang))) }, bg = "transparent")
+  output$dg_nbr        <- renderPlot({ suppressWarnings(print(diagram_neighborhood(plot_theme(), input$lang))) }, bg = "transparent")
+  output$dg_co         <- renderPlot({ suppressWarnings(print(diagram_cooccurrence(plot_theme(), input$lang))) }, bg = "transparent")
+  output$dg_ne         <- renderPlot({ suppressWarnings(print(diagram_ne(plot_theme(), input$lang))) }, bg = "transparent")
+  output$dg_niche_map  <- renderPlot({ suppressWarnings(print(diagram_niche_map(plot_theme(), input$lang))) }, bg = "transparent")
+  output$dg_niche_comp <- renderPlot({ suppressWarnings(print(diagram_niche_comp(plot_theme(), input$lang))) }, bg = "transparent")
+
   # 選択データの空間座標
   spatial_xy <- reactive({
     obj <- spatial_obj(); req(obj)
@@ -4046,6 +4251,7 @@ server <- function(input, output, session) {
   # 計算は「描画」ボタン押下時のみ（observeEvent → reactiveVal）。
   output$spatial_plot_ui <- renderUI({
     tagList(
+      dg_section("dg_map", t("dg_title"), t("dg_map_d")),
       div(class = "mb-2",
         actionButton("spatial_map_run", t("plot_run"), class = "btn-primary btn-sm",
                      icon = icon("play")),
@@ -4317,8 +4523,10 @@ server <- function(input, output, session) {
   # ==========================================================================
   output$spatial_nbr_ui <- renderUI({
     lang <- input$lang
-    if (!data_loaded()) return(placeholder_ui())
+    diag <- dg_section("dg_nbr", t("dg_title"), t("dg_nbr_d"), height = "260px")
+    if (!data_loaded() && is.null(spatial_obj_loaded())) return(tagList(diag, placeholder_ui()))
     tagList(
+      diag,
       div(class = "d-flex align-items-center gap-2 mb-2",
         actionButton("spatial_nbr_run", t("spatial_nbr_run"),
                      class = "btn-primary btn-sm", icon = icon("ruler")),
@@ -4472,8 +4680,10 @@ server <- function(input, output, session) {
   # ==========================================================================
   output$spatial_co_ui <- renderUI({
     lang <- input$lang
-    if (!data_loaded()) return(placeholder_ui())
+    diag <- dg_section("dg_co", t("dg_title"), t("dg_co_d"), height = "260px")
+    if (!data_loaded() && is.null(spatial_obj_loaded())) return(tagList(diag, placeholder_ui()))
     tagList(
+      diag,
       div(class = "d-flex align-items-center gap-2 mb-2",
         actionButton("spatial_co_run", t("spatial_co_run"), class = "btn-primary btn-sm",
                      icon = icon("link")),
@@ -4565,8 +4775,10 @@ server <- function(input, output, session) {
   # ==========================================================================
   output$spatial_ne_ui <- renderUI({
     lang <- input$lang
-    if (!data_loaded()) return(placeholder_ui())
+    diag <- dg_section("dg_ne", t("dg_title"), t("dg_ne_d"), height = "300px")
+    if (!data_loaded() && is.null(spatial_obj_loaded())) return(tagList(diag, placeholder_ui()))
     tagList(
+      diag,
       radioButtons("spatial_ne_mode", t("spatial_ne_mode"),
         choices = c(setNames("symmetric", t("spatial_ne_mode_sym")),
                     setNames("directed",  t("spatial_ne_mode_dir"))),
@@ -4717,15 +4929,18 @@ server <- function(input, output, session) {
       scale_fill_gradient2(low = "#3C5488FF", mid = "#F7F7F7", high = "#DC0000FF",
                            midpoint = 0, limits = c(-lim, lim),
                            oob = scales::squish, name = "z") +
-      labs(x = if (directed) t("spatial_ne_axis_nbr") else NULL,
-           y = if (directed) t("spatial_ne_axis_src") else NULL,
-           title = if (directed) t("spatial_ne_title_dir") else t("spatial_ne_title")) +
+      labs(x = if (directed) t("spatial_ne_axis_nbr") else t("spatial_ne_axis_sym"),
+           y = if (directed) t("spatial_ne_axis_src") else t("spatial_ne_axis_sym"),
+           title = if (directed) t("spatial_ne_title_dir") else t("spatial_ne_title"),
+           subtitle = if (directed) t("spatial_ne_sub_dir") else t("spatial_ne_sub_sym")) +
       theme_minimal(base_size = 11) +
       theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5, size = 8),
             axis.text.y = element_text(size = 8), panel.grid = element_blank(),
             plot.background = element_rect(fill = pt$bg, color = NA),
             panel.background = element_rect(fill = pt$bg, color = NA),
             text = element_text(color = pt$fg), axis.text = element_text(color = pt$fg2),
+            axis.title = element_text(color = pt$fg2, size = 9),
+            plot.subtitle = element_text(size = 8.5, color = pt$fg),
             plot.title = element_text(size = 13, face = "bold", color = pt$accent))
   })
   if (requireNamespace("plotly", quietly = TRUE)) {
@@ -5025,12 +5240,14 @@ server <- function(input, output, session) {
                          icon = icon("draw-polygon"))
           )),
           h6(class = "text-primary", t("niche_map_title")),
+          dg_section("dg_niche_map", t("dg_title"), t("dg_niche_map_d")),
           if (requireNamespace("plotly", quietly = TRUE))
             plotly::plotlyOutput("niche_map_plotly", height = act_h(), width = act_w())
           else
             plotOutput("niche_map", height = act_h(), width = act_w()),
           hr(),
           h6(class = "text-primary", t("niche_comp_title")),
+          dg_section("dg_niche_comp", t("dg_title"), t("dg_niche_comp_d")),
           if (is.null(niche_cells())) {
             div(class = "alert alert-light py-2 small", icon("circle-info"), " ", t("niche_comp_need"))
           } else {
