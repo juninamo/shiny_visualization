@@ -5346,10 +5346,16 @@ server <- function(input, output, session) {
                 bslib::tooltip(tags$span(icon("circle-question"), style = "cursor: help;"),
                                t("niche_ne_help"), placement = "right"))))
           ),
-          radioButtons("niche_ne_mode", t("spatial_ne_mode"),
-            choices = c(setNames("symmetric", t("spatial_ne_mode_sym")),
-                        setNames("directed",  t("spatial_ne_mode_dir"))),
-            selected = isolate(input$niche_ne_mode) %||% "symmetric", inline = TRUE),
+          fluidRow(
+            column(6, radioButtons("niche_ne_mode", t("spatial_ne_mode"),
+              choices = c(setNames("symmetric", t("spatial_ne_mode_sym")),
+                          setNames("directed",  t("spatial_ne_mode_dir"))),
+              selected = isolate(input$niche_ne_mode) %||% "symmetric", inline = TRUE)),
+            column(6, radioButtons("niche_ne_scope", t("niche_comp_scope"),
+              choices = c(setNames("sample", t("niche_comp_sample")),
+                          setNames("all", t("niche_comp_all"))),
+              selected = isolate(input$niche_ne_scope) %||% "sample", inline = TRUE))
+          ),
           uiOutput("niche_ne_caption"),
           if (requireNamespace("plotly", quietly = TRUE))
             plotly::plotlyOutput("niche_ne_plot", height = act_h(), width = act_w())
@@ -5637,8 +5643,10 @@ server <- function(input, output, session) {
     td <- niche_tile(); req(td)
     var <- input$niche_var %||% niche_var_choices(td)[1]; req(var %in% names(td))
     validate(need(all(c("X", "Y") %in% names(td)), t("niche_ne_noxy")))
+    scope <- input$niche_ne_scope %||% "sample"
     smp <- input$niche_sample
-    sub <- if (!is.null(smp) && length(smp) > 0) td[as.character(td$sample_id) %in% smp, , drop = FALSE] else td
+    sub <- if (scope == "sample" && !is.null(smp) && length(smp) > 0)
+             td[as.character(td$sample_id) %in% smp, , drop = FALSE] else td
     req(nrow(sub) > 0)
     data.frame(x = as.numeric(sub$X), y = as.numeric(sub$Y),
                col = factor(as.character(sub[[var]]), levels = cluster_level_order(sub[[var]])),
