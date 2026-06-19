@@ -980,6 +980,16 @@ ui <- page_sidebar(
       )
     ),
 
+    # Azimuth による自動アノテーション（Pan-Human など）
+    nav_panel(
+      title = "\U0001F9ED Azimuth",
+      value = "azimuth",
+      card_body(
+        class = "p-2",
+        uiOutput("azimuth_panel_ui")
+      )
+    ),
+
     nav_panel(
       title = "\U0001F9F1 Composition",
       value = "composition",
@@ -1007,16 +1017,6 @@ ui <- page_sidebar(
       card_body(
         class = "p-2",
         uiOutput("spatial_panel_ui")
-      )
-    ),
-
-    # Azimuth による自動アノテーション（Pan-Human など）
-    nav_panel(
-      title = "\U0001F9ED Azimuth",
-      value = "azimuth",
-      card_body(
-        class = "p-2",
-        uiOutput("azimuth_panel_ui")
       )
     ),
 
