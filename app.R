@@ -614,7 +614,7 @@ i18n <- list(
     niche_map_title   = "Niche マップ",
     niche_comp_title  = "Niche × 細胞型 (ct) 構成比",
     niche_comp_scope  = "集計範囲",
-    niche_comp_sample = "表示中サンプルのみ",
+    niche_comp_sample = "表示中のサンプルのみ",
     niche_comp_all    = "全サンプル",
     niche_comp_need   = "細胞アノテーションファイル(clusters_meta)を読み込むと、各 niche の細胞型構成を表示できます。",
     niche_ct_col      = "細胞種の列",
@@ -881,7 +881,7 @@ i18n <- list(
     niche_map_title   = "Niche map",
     niche_comp_title  = "Niche × cell type (ct) composition",
     niche_comp_scope  = "Scope",
-    niche_comp_sample = "Displayed sample only",
+    niche_comp_sample = "Displayed samples only",
     niche_comp_all    = "All samples",
     niche_comp_need   = "Load the cell annotation file (clusters_meta) to see the cell-type composition of each niche.",
     niche_ct_col      = "Cell-type column",
@@ -4937,8 +4937,10 @@ server <- function(input, output, session) {
         tagList(
           div(class = "card mb-3", div(class = "card-body",
             fluidRow(
-              column(4, selectInput("niche_sample", t("niche_sample"), choices = samples,
-                                    selected = isolate(input$niche_sample) %||% samples[1])),
+              column(4, selectizeInput("niche_sample", t("niche_sample"), choices = samples,
+                                    selected = isolate(input$niche_sample) %||% samples[1],
+                                    multiple = TRUE,
+                                    options = list(plugins = list("remove_button")))),
               column(4, selectInput("niche_var", t("niche_var"), choices = vars,
                                     selected = isolate(input$niche_var) %||% vars[1])),
               column(2, numericInput("niche_lwd", t("niche_lwd"), value = isolate(input$niche_lwd) %||% 0.1,
@@ -5075,11 +5077,12 @@ server <- function(input, output, session) {
     ))
   })
 
-  # 選択サンプルのタイルをポリゴン座標に展開する
+  # 選択サンプル（複数可）のタイルをポリゴン座標に展開する
   niche_poly_df <- function(td, smp, var) {
-    sub <- td[as.character(td$sample_id) == smp, , drop = FALSE]
+    sub <- td[as.character(td$sample_id) %in% smp, , drop = FALSE]
     if (nrow(sub) == 0) return(NULL)
     shp <- sub$shape
+    samp <- as.character(sub$sample_id)
     parts <- lapply(seq_len(nrow(sub)), function(i) {
       cc <- tryCatch(sf::st_coordinates(shp[[i]]), error = function(e) NULL)
       if (is.null(cc) || nrow(cc) == 0) return(NULL)
@@ -5087,9 +5090,10 @@ server <- function(input, output, session) {
       L2 <- if ("L2" %in% colnames(cc)) cc[, "L2"] else 1
       L3 <- if ("L3" %in% colnames(cc)) cc[, "L3"] else 1
       data.frame(
-        grp   = paste(i, L3, L2, L1, sep = "_"),
-        x     = cc[, "X"], y = cc[, "Y"],
-        niche = as.character(sub[[var]][i]),
+        grp    = paste(i, L3, L2, L1, sep = "_"),   # i は行番号なのでサンプル跨ぎでも一意
+        x      = cc[, "X"], y = cc[, "Y"],
+        niche  = as.character(sub[[var]][i]),
+        sample = samp[i],
         stringsAsFactors = FALSE)
     })
     do.call(rbind, parts)
@@ -5106,6 +5110,14 @@ server <- function(input, output, session) {
     }
     df <- niche_poly_df(td, spec$sample, var); req(!is.null(df), nrow(df) > 0)
     if (isTRUE(spec$flip)) df$y <- -df$y
+    multi <- length(unique(df$sample)) > 1
+    # 複数サンプル時は各サンプルを原点中心に揃える。こうすると facet を
+    # 固定スケールにでき、coord_equal(真の形状・縮尺)と両立する。
+    if (multi) {
+      ctr <- function(z) z - mean(range(z, na.rm = TRUE))
+      df$x <- stats::ave(df$x, df$sample, FUN = ctr)
+      df$y <- stats::ave(df$y, df$sample, FUN = ctr)
+    }
     pt <- plot_theme()
     levs <- cluster_level_order(df$niche)
     hl <- spec$highlight
@@ -5119,13 +5131,15 @@ server <- function(input, output, session) {
       df$fillv <- factor(df$niche, levels = levs)
       pal <- full_pal
     }
-    df$text <- paste0(var, ": ", df$niche)
+    df$text <- paste0(var, ": ", df$niche,
+                      if (multi) paste0("<br>sample: ", df$sample) else "")
+    ttl <- if (multi) sprintf("%d samples", length(unique(df$sample))) else df$sample[1]
     border <- if (isTRUE(input$dark_mode == "dark")) "#1b1f24" else "white"
-    ggplot(df, aes(x = x, y = y, group = grp, fill = fillv, text = text)) +
+    p <- ggplot(df, aes(x = x, y = y, group = grp, fill = fillv, text = text)) +
       geom_polygon(color = border, linewidth = spec$lwd %||% 0.1) +
       scale_fill_manual(values = pal, name = var, drop = FALSE) +
       coord_equal(expand = FALSE) +
-      labs(title = spec$sample, x = NULL, y = NULL) +
+      labs(title = ttl, x = NULL, y = NULL) +
       theme_minimal(base_size = 12) +
       theme(
         plot.background = element_rect(fill = pt$bg, color = NA),
@@ -5136,6 +5150,8 @@ server <- function(input, output, session) {
         legend.key.size = grid::unit(0.8, "lines"),
         plot.title = element_text(size = 14, face = "bold", color = pt$accent)) +
       guides(fill = guide_legend(override.aes = list(color = NA), ncol = 1))
+    if (multi) p <- p + facet_wrap(~ sample)   # 固定スケール＝coord_equal と両立
+    p
   })
 
   output$niche_map <- renderPlot({ suppressWarnings(print(niche_map_ggplot())) }, bg = "transparent")
@@ -5159,8 +5175,9 @@ server <- function(input, output, session) {
     cc <- cells
     # サンプル絞り込みは tile_id の所属(tile_meta 側の sample_id)で行う。
     # 注釈ファイルの sample_id 命名がタイル側と異なっていても正しく動く。
-    if ((input$niche_comp_scope %||% "sample") == "sample" && !is.null(input$niche_sample)) {
-      tiles_in_sample <- as.character(td$id[as.character(td$sample_id) == input$niche_sample])
+    if ((input$niche_comp_scope %||% "sample") == "sample" &&
+        !is.null(input$niche_sample) && length(input$niche_sample) > 0) {
+      tiles_in_sample <- as.character(td$id[as.character(td$sample_id) %in% input$niche_sample])
       cc <- cc[as.character(cc$tile_id) %in% tiles_in_sample, , drop = FALSE]
     }
     req(nrow(cc) > 0)
