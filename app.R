@@ -700,6 +700,10 @@ i18n <- list(
     spatial_color     = "色分け変数",
     spatial_sample_col = "サンプル列",
     spatial_sample    = "サンプル",
+    spatial_sample_map = "サンプル（🗺️ マップ表示用）",
+    spatial_sample_nbr = "サンプル（📏近傍 / 🔗共局在 / 🔥集積 解析用）",
+    spatial_sample_all = "（すべて / all）",
+    spatial_sample_ph  = "未選択 = 全サンプル（all）",
     spatial_pt        = "点のサイズ",
     spatial_flip      = "Y軸を反転",
     spatial_none      = "このオブジェクトに位置座標(x/y)が見つかりません。",
@@ -988,6 +992,10 @@ i18n <- list(
     spatial_color     = "Color variable",
     spatial_sample_col = "Sample column",
     spatial_sample    = "Sample",
+    spatial_sample_map = "Sample (🗺️ for the Map)",
+    spatial_sample_nbr = "Sample (📏Neighborhood / 🔗Co-occurrence / 🔥Enrichment)",
+    spatial_sample_all = "(all)",
+    spatial_sample_ph  = "none selected = all samples",
     spatial_pt        = "Point size",
     spatial_flip      = "Flip Y axis",
     spatial_none      = "No spatial coordinates (x/y) found in this object.",
@@ -1153,6 +1161,12 @@ ui <- page_sidebar(
         if(busy && iv===null){ t0=Date.now(); tick(); iv=setInterval(tick,500); }
         else if(!busy && iv!==null){ clearInterval(iv); iv=null; t0=null; }
       }).observe(document.documentElement, {attributes:true, attributeFilter:['class']});
+      // タブ/アコーディオンが表示された時に plotly などを再サイズ（非表示タブで
+      // 0サイズ描画され空白になるのを防ぐ）
+      function nudge(){ try{ window.dispatchEvent(new Event('resize')); }catch(e){} }
+      $(document).on('shown.bs.tab shown.bs.collapse shown.bs.accordion', function(){
+        nudge(); setTimeout(nudge, 200);
+      });
     })();
   ")),
 
@@ -4167,7 +4181,9 @@ server <- function(input, output, session) {
           column(6, selectInput("spatial_sample_col", t("spatial_sample_col"),
                                 choices = samp_cands, selected = samp_col_sel))
         ),
-        uiOutput("spatial_sample_ui"),
+        # マップ用のサンプル選択は Map サブタブ表示時のみ（近傍解析用と混同しないように）
+        conditionalPanel("!input.spatial_subtab || input.spatial_subtab == 'map'",
+          uiOutput("spatial_sample_ui")),
         fluidRow(
           column(6, sliderInput("spatial_pt", t("spatial_pt"),
                                 min = 0.1, max = 4, value = isolate(input$spatial_pt) %||% 0.8, step = 0.1)),
@@ -4241,17 +4257,18 @@ server <- function(input, output, session) {
     sc <- input$spatial_sample_col
     if (is.null(sc) || identical(sc, "__none__") || !(sc %in% names(obj@meta.data))) return(NULL)
     vals <- sort(unique(as.character(obj@meta.data[[sc]])))
+    choices <- c(setNames("__all__", t("spatial_sample_all")), setNames(vals, vals))
     prev <- isolate(input$spatial_sample)
-    sel <- if (!is.null(prev) && all(prev %in% vals) && length(prev) > 0) prev else vals[1]
-    selectizeInput("spatial_sample", t("spatial_sample"), choices = vals, selected = sel,
-                   multiple = TRUE, options = list(plugins = list("remove_button")))
+    sel <- if (!is.null(prev) && all(prev %in% c("__all__", vals)) && length(prev) > 0) prev else "__all__"
+    selectizeInput("spatial_sample", t("spatial_sample_map"), choices = choices, selected = sel,
+                   multiple = TRUE,
+                   options = list(plugins = list("remove_button"), placeholder = t("spatial_sample_ph")))
   })
 
   # プロット出力は常にDOMに置く（動的挿入による htmlwidget 初期化失敗を回避）。
   # 計算は「描画」ボタン押下時のみ（observeEvent → reactiveVal）。
   output$spatial_plot_ui <- renderUI({
     tagList(
-      dg_section("dg_map", t("dg_title"), t("dg_map_d")),
       div(class = "mb-2",
         actionButton("spatial_map_run", t("plot_run"), class = "btn-primary btn-sm",
                      icon = icon("play")),
@@ -4260,7 +4277,8 @@ server <- function(input, output, session) {
         plotly::plotlyOutput("spatial_plotly", height = act_h(), width = act_w())
       } else {
         plotOutput("spatial_plot", height = act_h(), width = act_w())
-      }
+      },
+      dg_section("dg_map", t("dg_title"), t("dg_map_d"))
     )
   })
 
@@ -4271,8 +4289,9 @@ server <- function(input, output, session) {
     obj <- tryCatch(spatial_obj(), error = function(e) NULL)
     if (!is.null(obj) && ncol(obj) > 300000L) {
       sc <- input$spatial_sample_col
+      ssel <- input$spatial_sample
       have <- !is.null(sc) && !identical(sc, "__none__") &&
-              !is.null(input$spatial_sample) && length(input$spatial_sample) > 0
+              length(ssel) > 0 && !("__all__" %in% ssel)
       if (!have) {
         showNotification(sprintf(t("spatial_pick_sample"), format(ncol(obj), big.mark = ",")),
                          type = "warning", duration = 10)
@@ -4311,7 +4330,9 @@ server <- function(input, output, session) {
     sc <- input$spatial_sample_col
     has_samplecol <- !is.null(sc) && !identical(sc, "__none__") && sc %in% names(meta)
     sample_sel <- input$spatial_sample
-    have_sample <- has_samplecol && !is.null(sample_sel) && length(sample_sel) > 0
+    # 「__all__」または未選択 = 全サンプル
+    is_all <- length(sample_sel) == 0 || "__all__" %in% sample_sel
+    have_sample <- has_samplecol && !is_all
     # 巨大データはサンプルを1つも選ばないと描画が重すぎるためガード
     if (ncell > 300000L && !have_sample) {
       validate(need(FALSE, sprintf(t("spatial_pick_sample"), format(ncell, big.mark = ","))))
@@ -4524,9 +4545,8 @@ server <- function(input, output, session) {
   output$spatial_nbr_ui <- renderUI({
     lang <- input$lang
     diag <- dg_section("dg_nbr", t("dg_title"), t("dg_nbr_d"), height = "260px")
-    if (!data_loaded() && is.null(spatial_obj_loaded())) return(tagList(diag, placeholder_ui()))
+    if (!data_loaded() && is.null(spatial_obj_loaded())) return(tagList(placeholder_ui(), diag))
     tagList(
-      diag,
       div(class = "d-flex align-items-center gap-2 mb-2",
         actionButton("spatial_nbr_run", t("spatial_nbr_run"),
                      class = "btn-primary btn-sm", icon = icon("ruler")),
@@ -4534,7 +4554,8 @@ server <- function(input, output, session) {
                        t("spatial_nbr_help"), placement = "right")),
       if (requireNamespace("plotly", quietly = TRUE)) {
         plotly::plotlyOutput("spatial_nbr_plot", height = act_h(), width = act_w())
-      } else plotOutput("spatial_nbr_plot_static", height = act_h(), width = act_w())
+      } else plotOutput("spatial_nbr_plot_static", height = act_h(), width = act_w()),
+      diag
     )
   })
 
@@ -4544,10 +4565,13 @@ server <- function(input, output, session) {
     sc <- input$spatial_sample_col
     if (is.null(sc) || identical(sc, "__none__") || !(sc %in% names(obj@meta.data))) return(NULL)
     vals <- sort(unique(as.character(obj@meta.data[[sc]])))
+    choices <- c(setNames("__all__", t("spatial_sample_all")), setNames(vals, vals))
     prev <- isolate(input$spatial_nbr_sample)
-    sel <- if (!is.null(prev) && all(prev %in% vals) && length(prev) > 0) prev else vals[1]
-    selectizeInput("spatial_nbr_sample", t("spatial_sample"), choices = vals, selected = sel,
-                   multiple = TRUE, options = list(plugins = list("remove_button")))
+    # 近傍解析は重くなりうるので既定は先頭1サンプル。「すべて」は明示的に選べる。
+    sel <- if (!is.null(prev) && all(prev %in% c("__all__", vals)) && length(prev) > 0) prev else vals[1]
+    selectizeInput("spatial_nbr_sample", t("spatial_sample_nbr"), choices = choices, selected = sel,
+                   multiple = TRUE,
+                   options = list(plugins = list("remove_button"), placeholder = t("spatial_sample_ph")))
   })
 
   # 近傍解析用データ（マップとは独立: 色分け変数=クラスター + 近傍解析用サンプル）
@@ -4567,7 +4591,8 @@ server <- function(input, output, session) {
     if (!is.null(sc) && !identical(sc, "__none__") && sc %in% names(meta)) {
       df$sample <- as.character(meta[df$cell, sc])
       sel <- input$spatial_nbr_sample
-      if (!is.null(sel) && length(sel) > 0) df <- df[df$sample %in% sel, , drop = FALSE]
+      # 「__all__」または未選択 = 全サンプル
+      if (length(sel) > 0 && !("__all__" %in% sel)) df <- df[df$sample %in% sel, , drop = FALSE]
     } else df$sample <- "all"
     validate(need(nrow(df) > 0, t("spatial_none")))
     df
@@ -4681,9 +4706,8 @@ server <- function(input, output, session) {
   output$spatial_co_ui <- renderUI({
     lang <- input$lang
     diag <- dg_section("dg_co", t("dg_title"), t("dg_co_d"), height = "260px")
-    if (!data_loaded() && is.null(spatial_obj_loaded())) return(tagList(diag, placeholder_ui()))
+    if (!data_loaded() && is.null(spatial_obj_loaded())) return(tagList(placeholder_ui(), diag))
     tagList(
-      diag,
       div(class = "d-flex align-items-center gap-2 mb-2",
         actionButton("spatial_co_run", t("spatial_co_run"), class = "btn-primary btn-sm",
                      icon = icon("link")),
@@ -4691,7 +4715,8 @@ server <- function(input, output, session) {
                        t("spatial_co_help"), placement = "right")),
       if (requireNamespace("plotly", quietly = TRUE))
         plotly::plotlyOutput("spatial_co_plot", height = act_h(), width = act_w())
-      else plotOutput("spatial_co_plot_static", height = act_h(), width = act_w())
+      else plotOutput("spatial_co_plot_static", height = act_h(), width = act_w()),
+      diag
     )
   })
 
@@ -4776,9 +4801,8 @@ server <- function(input, output, session) {
   output$spatial_ne_ui <- renderUI({
     lang <- input$lang
     diag <- dg_section("dg_ne", t("dg_title"), t("dg_ne_d"), height = "300px")
-    if (!data_loaded() && is.null(spatial_obj_loaded())) return(tagList(diag, placeholder_ui()))
+    if (!data_loaded() && is.null(spatial_obj_loaded())) return(tagList(placeholder_ui(), diag))
     tagList(
-      diag,
       radioButtons("spatial_ne_mode", t("spatial_ne_mode"),
         choices = c(setNames("symmetric", t("spatial_ne_mode_sym")),
                     setNames("directed",  t("spatial_ne_mode_dir"))),
@@ -4798,10 +4822,20 @@ server <- function(input, output, session) {
             bslib::tooltip(tags$span(icon("circle-question"), style = "cursor: help;"),
                            t("spatial_ne_help"), placement = "right"))))
       ),
+      uiOutput("spatial_ne_caption"),
       if (requireNamespace("plotly", quietly = TRUE))
         plotly::plotlyOutput("spatial_ne_plot", height = act_h(), width = act_w())
-      else plotOutput("spatial_ne_plot_static", height = act_h(), width = act_w())
+      else plotOutput("spatial_ne_plot_static", height = act_h(), width = act_w()),
+      diag
     )
+  })
+
+  # 行=中心 / 列=近傍 の読み方説明（プロット外のキャプションとして表示）
+  output$spatial_ne_caption <- renderUI({
+    directed <- identical(input$spatial_ne_mode %||% "symmetric", "directed")
+    div(class = "alert alert-light py-2 small mb-2",
+        icon("circle-info"), " ",
+        if (directed) t("spatial_ne_sub_dir") else t("spatial_ne_sub_sym"))
   })
 
   spatial_ne_obj <- eventReactive(input$spatial_ne_run, {
@@ -4931,8 +4965,7 @@ server <- function(input, output, session) {
                            oob = scales::squish, name = "z") +
       labs(x = if (directed) t("spatial_ne_axis_nbr") else t("spatial_ne_axis_sym"),
            y = if (directed) t("spatial_ne_axis_src") else t("spatial_ne_axis_sym"),
-           title = if (directed) t("spatial_ne_title_dir") else t("spatial_ne_title"),
-           subtitle = if (directed) t("spatial_ne_sub_dir") else t("spatial_ne_sub_sym")) +
+           title = if (directed) t("spatial_ne_title_dir") else t("spatial_ne_title")) +
       theme_minimal(base_size = 11) +
       theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5, size = 8),
             axis.text.y = element_text(size = 8), panel.grid = element_blank(),
@@ -4940,7 +4973,6 @@ server <- function(input, output, session) {
             panel.background = element_rect(fill = pt$bg, color = NA),
             text = element_text(color = pt$fg), axis.text = element_text(color = pt$fg2),
             axis.title = element_text(color = pt$fg2, size = 9),
-            plot.subtitle = element_text(size = 8.5, color = pt$fg),
             plot.title = element_text(size = 13, face = "bold", color = pt$accent))
   })
   if (requireNamespace("plotly", quietly = TRUE)) {
