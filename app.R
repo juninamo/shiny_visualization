@@ -5386,28 +5386,38 @@ server <- function(input, output, session) {
         if (!is.null(input$niche_cl_path) && nzchar(input$niche_cl_path)) {
           cp <- file.path(app_dir, input$niche_cl_path)
           cells <- readRDS(cp)
+          # Seurat オブジェクトを選んだ場合は meta.data を取り出す（巨大ファイルは
+          # 読み込みに時間がかかるため、_meta.rds の data.frame 版を推奨）
+          if (inherits(cells, "Seurat")) {
+            cells <- tryCatch(cells@meta.data, error = function(e) cells)
+          }
           if (!is.data.frame(cells)) {
             niche_cells(NULL); showNotification(t("niche_not_df"), type = "warning")
           } else {
             # tile_id が無い注釈ファイルは、tessera の *clusters_meta* から
-            # 行名(または cell_id)一致で tile_id を補完する
+            # 行名(または cell_id)一致で tile_id を補完する。複数の clusters_meta が
+            # ある場合は、復元した tile_id が読み込んだ tile ファイルに属するものを採用。
             if (!("tile_id" %in% names(cells))) {
               setProgress(message = t("niche_linking"))
+              valid_ids <- as.character(td$id)
               link_files <- setdiff(grep("clusters_meta", rds_files, value = TRUE),
                                     input$niche_cl_path)
               for (lf in link_files) {
                 link <- tryCatch(readRDS(file.path(app_dir, lf)), error = function(e) NULL)
+                cand <- NULL
                 if (is.data.frame(link) && "tile_id" %in% names(link)) {
-                  if (nrow(link) == nrow(cells) &&
-                      identical(rownames(link), rownames(cells))) {
-                    cells$tile_id <- link$tile_id
+                  if (nrow(link) == nrow(cells) && identical(rownames(link), rownames(cells))) {
+                    cand <- as.character(link$tile_id)
                   } else if ("cell_id" %in% names(link) && "cell_id" %in% names(cells)) {
-                    cells$tile_id <- link$tile_id[match(as.character(cells$cell_id),
-                                                        as.character(link$cell_id))]
+                    m <- match(as.character(cells$cell_id), as.character(link$cell_id))
+                    if (mean(!is.na(m)) > 0.5) cand <- as.character(link$tile_id)[m]
                   }
                 }
                 rm(link); gc(verbose = FALSE)
-                if ("tile_id" %in% names(cells) && any(!is.na(cells$tile_id))) break
+                # 復元 tile_id の大半がこの tile ファイルに属していれば採用
+                if (!is.null(cand) && mean(cand %in% valid_ids, na.rm = TRUE) > 0.5) {
+                  cells$tile_id <- cand; break
+                }
               }
             }
             if ("tile_id" %in% names(cells) && any(!is.na(cells$tile_id))) {
