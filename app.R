@@ -862,6 +862,28 @@ i18n <- list(
     punkst_topic_need = "上の『Topic 情報ファイル』をアップロードすると、各 factor の上位 marker 遺伝子を表示します。",
     punkst_topic_genes = "上位遺伝子",
     punkst_legend_title = "Factor カラー",
+    # 関連付け解析
+    punkst_niche_file = "niche タイルファイル (任意・topic×niche用)",
+    punkst_assoc_title = "Topic × 細胞種 / niche 関連付け",
+    punkst_assoc_var  = "関連付ける変数",
+    punkst_assoc_norm = "正規化",
+    punkst_assoc_topic = "topicごと (行=1)",
+    punkst_assoc_var2 = "変数ごと (列=1)",
+    punkst_assoc_enr  = "濃縮 (観測/期待 log2)",
+    punkst_assoc_run  = "関連付けを計算",
+    punkst_assoc_dl   = "関連付け表をCSVで保存",
+    punkst_assoc_help = "各細胞の top_factor と、選んだ変数(細胞種 anno_clusters や niche など)のクロス集計です。topicごと(行=1)で各topicの構成、変数ごと(列=1)で各細胞種/nicheがどのtopicに多いか、濃縮で観測/期待のlog2(正=多い)を表示します。",
+    # Pseudobulk DEG / GSEA
+    punkst_pb_title   = "Topic間 DEG / GSEA (pseudobulk)",
+    punkst_pb_up      = "pseudobulk ファイル (genes × topics の tsv/csv)",
+    punkst_pb_need    = "pseudobulk ファイル(hex_..._topics_50.pseudobulk.tsv など)をアップロードしてください。",
+    punkst_pb_a       = "Topic A",
+    punkst_pb_b       = "Topic B (基準)",
+    punkst_pb_b_rest  = "(その他すべて)",
+    punkst_pb_run     = "DEG を計算 (A vs B)",
+    punkst_pb_deg_dl  = "DEG表をCSVで保存",
+    punkst_pb_help    = "pseudobulk(各topicの合算発現)を列ごとにCPM正規化し、Topic A と B(または他全体)の log2 fold change で遺伝子をランキングします(複製が無いため統計検定ではなく fold change ベース)。下の GSEA はこのランキングで fgsea を実行します。",
+    punkst_pb_genes   = "遺伝子",
 
     # プレースホルダ
     placeholder_load  = "\U0001F4C2 RDSファイルを選択して「読み込む」ボタンを押してください",
@@ -1191,6 +1213,28 @@ i18n <- list(
     punkst_topic_need = "Upload a 'Topic info file' above to see the top marker genes of each factor.",
     punkst_topic_genes = "Top genes",
     punkst_legend_title = "Factor colors",
+    # Association
+    punkst_niche_file = "Niche tile file (optional, for topic × niche)",
+    punkst_assoc_title = "Topic × cell type / niche association",
+    punkst_assoc_var  = "Association variable",
+    punkst_assoc_norm = "Normalization",
+    punkst_assoc_topic = "Per topic (row = 1)",
+    punkst_assoc_var2 = "Per variable (col = 1)",
+    punkst_assoc_enr  = "Enrichment (obs/exp log2)",
+    punkst_assoc_run  = "Compute association",
+    punkst_assoc_dl   = "Download association CSV",
+    punkst_assoc_help = "Cross-tabulation of each cell's top_factor against a chosen variable (cell type anno_clusters, niche, etc.). Per topic (row=1) shows each topic's composition; per variable (col=1) shows which topics each cell-type/niche favors; enrichment shows log2(observed/expected) (positive = over-represented).",
+    # Pseudobulk DEG / GSEA
+    punkst_pb_title   = "Topic-vs-topic DEG / GSEA (pseudobulk)",
+    punkst_pb_up      = "Pseudobulk file (genes × topics tsv/csv)",
+    punkst_pb_need    = "Upload a pseudobulk file (e.g. hex_..._topics_50.pseudobulk.tsv).",
+    punkst_pb_a       = "Topic A",
+    punkst_pb_b       = "Topic B (reference)",
+    punkst_pb_b_rest  = "(all others)",
+    punkst_pb_run     = "Compute DEG (A vs B)",
+    punkst_pb_deg_dl  = "Download DEG CSV",
+    punkst_pb_help    = "CPM-normalizes each topic column of the pseudobulk and ranks genes by log2 fold change of Topic A vs B (or all others). With no replicates this is fold-change-based, not a statistical test. The GSEA below runs fgsea on this ranking.",
+    punkst_pb_genes   = "Genes",
 
     # Placeholders
     placeholder_load  = "\U0001F4C2 Select an RDS file and click 'Load'",
@@ -5761,11 +5805,43 @@ server <- function(input, output, session) {
   }
   # 色分け候補(カテゴリ列)
   punkst_var_choices <- function(df) {
-    pref <- intersect(c("top_factor", "anno_clusters", "merged_res_0.20"), names(df))
+    pref <- intersect(c("top_factor", "anno_clusters", "niche", "merged_res_0.20"), names(df))
     extra <- names(df)[vapply(df, function(v) is.factor(v) || is.character(v) ||
                               (is.numeric(v) && length(unique(v)) <= 80), logical(1))]
     extra <- setdiff(extra, c(pref, "cell_id", "sample_id", "x", "y"))
     c(pref, extra)
+  }
+
+  # 任意の niche タイルファイルから、各細胞の niche を復元する（niche タブと同じ
+  # 仕組み: tile_meta の id→seurat_clusters、tile_id は clusters_meta から照合）
+  recover_cell_niche <- function(fac, tile_path) {
+    td <- tryCatch(readRDS(file.path(app_dir, tile_path)), error = function(e) NULL)
+    if (!is.data.frame(td) || !("id" %in% names(td))) return(NULL)
+    nvar <- intersect(c("seurat_clusters", "RNA_snn_res.2"), names(td))[1]
+    if (is.na(nvar)) return(NULL)
+    niche_of <- setNames(as.character(td[[nvar]]), as.character(td$id))
+    valid_ids <- names(niche_of)
+    tid <- if ("tile_id" %in% names(fac)) as.character(fac$tile_id) else NULL
+    if (is.null(tid) || mean(tid %in% valid_ids, na.rm = TRUE) < 0.5) {
+      tid <- NULL
+      for (lf in grep("clusters_meta", rds_files, value = TRUE)) {
+        link <- tryCatch(readRDS(file.path(app_dir, lf)), error = function(e) NULL)
+        cand <- NULL
+        if (is.data.frame(link) && "tile_id" %in% names(link)) {
+          # 行名一致(順不同可)を優先、ダメなら cell_id 一致
+          m <- match(rownames(fac), rownames(link))
+          if (mean(!is.na(m)) > 0.8) cand <- as.character(link$tile_id)[m]
+          if (is.null(cand) && "cell_id" %in% names(link) && "cell_id" %in% names(fac)) {
+            m <- match(as.character(fac$cell_id), as.character(link$cell_id))
+            if (mean(!is.na(m)) > 0.8) cand <- as.character(link$tile_id)[m]
+          }
+        }
+        rm(link); gc(verbose = FALSE)
+        if (!is.null(cand) && mean(cand %in% valid_ids, na.rm = TRUE) > 0.5) { tid <- cand; break }
+      }
+    }
+    if (is.null(tid)) return(NULL)
+    unname(niche_of[tid])
   }
 
   output$punkst_panel_ui <- renderUI({
@@ -5784,6 +5860,11 @@ server <- function(input, output, session) {
                               selected = isolate(input$punkst_coord_path) %||% coord_default)),
         column(2, div(style = "margin-top: 30px;",
           actionButton("punkst_load", t("punkst_load"), class = "btn-primary btn-sm", icon = icon("folder-open"))))
+      ),
+      fluidRow(
+        column(6, selectInput("punkst_niche_path", t("punkst_niche_file"),
+                              choices = c(setNames("", "—"), setNames(rds_files, rds_files)),
+                              selected = isolate(input$punkst_niche_path) %||% ""))
       ),
       fluidRow(
         column(6, fileInput("punkst_color_file", t("punkst_color_up"), accept = c(".tsv", ".txt", ".csv"))),
@@ -5820,7 +5901,35 @@ server <- function(input, output, session) {
       h6(class = "text-primary", t("punkst_topic_title")),
       if (is.null(punkst_info()))
         div(class = "alert alert-light py-2 small", icon("circle-info"), " ", t("punkst_topic_need"))
-      else DTOutput("punkst_topic_table")
+      else DTOutput("punkst_topic_table"),
+      hr(),
+      # --- Topic × 細胞種 / niche 関連付け ---
+      h6(class = "text-primary", t("punkst_assoc_title"), " ",
+         bslib::tooltip(tags$span(icon("circle-question"), style = "cursor: help;"),
+                        t("punkst_assoc_help"), placement = "right")),
+      fluidRow(
+        column(4, selectInput("punkst_assoc_var", t("punkst_assoc_var"), choices = vars,
+                              selected = isolate(input$punkst_assoc_var) %||%
+                                (if ("anno_clusters" %in% vars) "anno_clusters" else vars[min(2, length(vars))]))),
+        column(4, radioButtons("punkst_assoc_norm", t("punkst_assoc_norm"),
+                  choices = c(setNames("topic", t("punkst_assoc_topic")),
+                              setNames("var", t("punkst_assoc_var2")),
+                              setNames("enr", t("punkst_assoc_enr"))),
+                  selected = isolate(input$punkst_assoc_norm) %||% "topic", inline = FALSE)),
+        column(2, div(style = "margin-top: 24px;",
+          actionButton("punkst_assoc_run", t("punkst_assoc_run"), class = "btn-outline-primary btn-sm",
+                       icon = icon("table-cells")))),
+        column(2, div(style = "margin-top: 24px;",
+          downloadButton("punkst_assoc_dl", t("punkst_assoc_dl"), class = "btn-outline-success btn-sm")))
+      ),
+      plotOutput("punkst_assoc_plot", height = act_h(), width = act_w()),
+      hr(),
+      # --- Topic間 DEG / GSEA (pseudobulk) ---
+      h6(class = "text-primary", t("punkst_pb_title"), " ",
+         bslib::tooltip(tags$span(icon("circle-question"), style = "cursor: help;"),
+                        t("punkst_pb_help"), placement = "right")),
+      fileInput("punkst_pb_file", t("punkst_pb_up"), accept = c(".tsv", ".txt", ".csv")),
+      uiOutput("punkst_pb_ui")
     )
   })
 
@@ -5851,11 +5960,23 @@ server <- function(input, output, session) {
               idx <- match(as.character(fac$cell_id), as.character(cm$cell_id))
             if (mean(!is.na(idx)) >= 0.5) {
               fac$x <- as.numeric(cm[[xy[1]]][idx]); fac$y <- as.numeric(cm[[xy[2]]][idx]); ok <- TRUE
+              # 関連付け用に座標ファイルの注釈/クラスター列も取り込む
+              carry <- names(cm)[vapply(cm, function(v) is.factor(v) || is.character(v) ||
+                                        (is.numeric(v) && length(unique(v)) <= 40), logical(1))]
+              carry <- grep("anno_clusters$|^ct$|merged_res|^cluster$|predicted_cluster$|niche|spatial_cluster|seurat_clusters|louvain",
+                            carry, value = TRUE)
+              for (cc in setdiff(carry, names(fac))) fac[[cc]] <- as.character(cm[[cc]][idx])
             }
           }
         }
         if (!ok) { showNotification(t("punkst_nocoord"), type = "error", duration = 12); return() }
         if (is.null(fac$sample_id)) fac$sample_id <- "sample1"
+        # 任意: niche タイルファイルから niche 列を付与（topic×niche 用）
+        if (!is.null(input$punkst_niche_path) && nzchar(input$punkst_niche_path)) {
+          setProgress(message = t("niche_linking"))
+          nv <- tryCatch(recover_cell_niche(fac, input$punkst_niche_path), error = function(e) NULL)
+          if (!is.null(nv) && any(!is.na(nv))) fac$niche <- as.character(nv)
+        }
         punkst_df(fac)
       }, error = function(e) showNotification(paste(t("notify_error"), conditionMessage(e)),
                                               type = "error", duration = 12))
@@ -5947,6 +6068,189 @@ server <- function(input, output, session) {
     d <- punkst_info(); req(d)
     datatable(d, rownames = FALSE, filter = "top",
               options = list(pageLength = 15, dom = "Blfrtip", scrollX = TRUE))
+  })
+
+  # --- Topic × 細胞種 / niche 関連付け（クロス集計） ---
+  punkst_assoc_mat <- eventReactive(input$punkst_assoc_run, {
+    df <- punkst_df(); req(df)
+    av <- input$punkst_assoc_var; req(av %in% names(df), "top_factor" %in% names(df))
+    keep <- !is.na(df$top_factor) & !is.na(df[[av]])
+    tf <- as.character(df$top_factor)[keep]; vv <- as.character(df[[av]])[keep]
+    m <- as.matrix(table(topic = tf, var = vv))
+    ro <- cluster_level_order(rownames(m)); m <- m[intersect(ro, rownames(m)), , drop = FALSE]
+    norm <- input$punkst_assoc_norm %||% "topic"
+    if (norm == "topic")     m <- sweep(m, 1, pmax(1, rowSums(m)), "/")
+    else if (norm == "var")  m <- sweep(m, 2, pmax(1, colSums(m)), "/")
+    else if (norm == "enr") {   # 観測/期待 の log2
+      tot <- sum(m); exp_m <- outer(rowSums(m), colSums(m)) / tot
+      m <- log2((m + 0.5) / (exp_m + 0.5))
+    }
+    m
+  }, ignoreInit = TRUE)
+
+  output$punkst_assoc_plot <- renderPlot({
+    m <- punkst_assoc_mat(); req(nrow(m) > 0, ncol(m) > 0)
+    pt <- plot_theme(); enr <- identical(input$punkst_assoc_norm, "enr")
+    co <- if (ncol(m) > 2) colnames(m)[stats::hclust(stats::dist(base::t(m)))$order] else colnames(m)
+    df <- data.frame(topic = factor(rep(rownames(m), times = ncol(m)), levels = rev(rownames(m))),
+                     var = factor(rep(colnames(m), each = nrow(m)), levels = co),
+                     val = as.vector(m), stringsAsFactors = FALSE)
+    p <- ggplot(df, aes(x = var, y = topic, fill = val)) + geom_tile(color = "grey85", linewidth = 0.2)
+    if (enr) p <- p + scale_fill_gradient2(low = "#3C5488FF", mid = "#F7F7F7", high = "#BC3C29FF",
+                                           midpoint = 0, name = "log2(o/e)")
+    else p <- p + scale_fill_gradientn(colors = c("#F7F7F7", "#FDB863", "#BC3C29FF"), name = "prop")
+    p + labs(x = input$punkst_assoc_var, y = "top_factor", title = t("punkst_assoc_title")) +
+      theme_minimal(base_size = 11) +
+      theme(axis.text.x = element_text(angle = 45, hjust = 1, size = 9), axis.text.y = element_text(size = 8),
+            panel.grid = element_blank(), plot.background = element_rect(fill = pt$bg, color = NA),
+            panel.background = element_rect(fill = pt$bg, color = NA), text = element_text(color = pt$fg),
+            axis.text = element_text(color = pt$fg2), plot.title = element_text(size = 13, face = "bold", color = pt$accent))
+  }, bg = "transparent")
+
+  output$punkst_assoc_dl <- downloadHandler(
+    filename = function() "punkst_topic_association.csv",
+    content = function(file) {
+      m <- punkst_assoc_mat()
+      utils::write.csv(data.frame(top_factor = rownames(m), m, check.names = FALSE), file, row.names = FALSE)
+    }
+  )
+
+  # --- Topic間 DEG / GSEA (pseudobulk) ---
+  punkst_pb <- reactiveVal(NULL)   # genes × topics 行列
+  punkst_deg <- reactiveVal(NULL)  # A vs B の log2FC 表
+  punkst_pb_gsea <- reactiveVal(NULL)
+
+  observeEvent(input$punkst_pb_file, {
+    f <- input$punkst_pb_file; req(f)
+    tryCatch({
+      sep <- if (grepl("\\.csv$", f$name, ignore.case = TRUE)) "," else "\t"
+      d <- utils::read.delim(f$datapath, sep = sep, stringsAsFactors = FALSE, check.names = FALSE)
+      gene_col <- names(d)[1]
+      mat <- as.matrix(d[, -1, drop = FALSE]); rownames(mat) <- make.unique(as.character(d[[gene_col]]))
+      mat <- mat[, vapply(seq_len(ncol(mat)), function(j) is.numeric(mat[, j]) || !any(is.na(suppressWarnings(as.numeric(mat[, j])))), logical(1)), drop = FALSE]
+      storage.mode(mat) <- "numeric"
+      punkst_pb(mat)
+    }, error = function(e) showNotification(conditionMessage(e), type = "warning"))
+  })
+
+  output$punkst_pb_ui <- renderUI({
+    mat <- punkst_pb()
+    if (is.null(mat)) return(div(class = "alert alert-light py-2 small", icon("circle-info"), " ", t("punkst_pb_need")))
+    topics <- colnames(mat)
+    tagList(
+      fluidRow(
+        column(3, selectInput("punkst_pb_a", t("punkst_pb_a"), choices = topics, selected = isolate(input$punkst_pb_a) %||% topics[1])),
+        column(3, selectInput("punkst_pb_b", t("punkst_pb_b"),
+                              choices = c(setNames("__rest__", t("punkst_pb_b_rest")), setNames(topics, topics)),
+                              selected = isolate(input$punkst_pb_b) %||% "__rest__")),
+        column(3, div(style = "margin-top: 24px;",
+          actionButton("punkst_pb_run", t("punkst_pb_run"), class = "btn-primary btn-sm", icon = icon("dna")))),
+        column(3, div(style = "margin-top: 24px;",
+          downloadButton("punkst_pb_deg_dl", t("punkst_pb_deg_dl"), class = "btn-outline-success btn-sm")))
+      ),
+      plotOutput("punkst_pb_plot", height = "420px"),
+      DTOutput("punkst_pb_table"),
+      hr(),
+      uiOutput("punkst_pb_gsea_ui")
+    )
+  })
+
+  observeEvent(input$punkst_pb_run, {
+    mat <- punkst_pb(); req(mat, input$punkst_pb_a)
+    a <- input$punkst_pb_a; b <- input$punkst_pb_b %||% "__rest__"
+    cpm <- sweep(mat, 2, pmax(1, colSums(mat)), "/") * 1e6
+    va <- cpm[, a]
+    vb <- if (identical(b, "__rest__")) rowMeans(cpm[, setdiff(colnames(cpm), a), drop = FALSE]) else cpm[, b]
+    lfc <- log2((va + 1) / (vb + 1))
+    deg <- data.frame(gene = rownames(mat), log2FC = round(lfc, 3),
+                      A_cpm = round(va, 1), B_cpm = round(vb, 1), stringsAsFactors = FALSE)
+    deg <- deg[order(-deg$log2FC), ]
+    punkst_deg(deg); punkst_pb_gsea(NULL)
+  })
+
+  output$punkst_pb_plot <- renderPlot({
+    deg <- punkst_deg(); req(deg); pt <- plot_theme()
+    top <- rbind(utils::head(deg, 15), utils::tail(deg, 15))
+    top$gene <- factor(top$gene, levels = top$gene[order(top$log2FC)])
+    ggplot(top, aes(x = log2FC, y = gene, fill = log2FC > 0)) + geom_col() +
+      scale_fill_manual(values = c("FALSE" = "#3C5488FF", "TRUE" = "#BC3C29FF"), guide = "none") +
+      labs(x = "log2 fold change (A vs B)", y = NULL,
+           title = sprintf("Topic %s vs %s", input$punkst_pb_a,
+                           if (identical(input$punkst_pb_b, "__rest__")) "rest" else input$punkst_pb_b)) +
+      theme_minimal(base_size = 12) +
+      theme(plot.background = element_rect(fill = pt$bg, color = NA), panel.background = element_rect(fill = pt$bg, color = NA),
+            text = element_text(color = pt$fg), axis.text = element_text(color = pt$fg2),
+            plot.title = element_text(size = 13, face = "bold", color = pt$accent))
+  }, bg = "transparent")
+
+  output$punkst_pb_table <- renderDT({
+    deg <- punkst_deg(); req(deg)
+    datatable(deg, rownames = FALSE, filter = "top",
+              options = list(pageLength = 15, order = list(list(1, "desc")), dom = "Blfrtip", scrollX = TRUE))
+  })
+
+  output$punkst_pb_deg_dl <- downloadHandler(
+    filename = function() "punkst_topic_DEG.csv",
+    content = function(file) { deg <- punkst_deg(); req(deg); utils::write.csv(deg, file, row.names = FALSE) }
+  )
+
+  # pseudobulk DEG ランキングで GSEA（既存の fgsea×MSigDB を再利用）
+  output$punkst_pb_gsea_ui <- renderUI({
+    req(punkst_deg())
+    if (!requireNamespace("fgsea", quietly = TRUE) || !requireNamespace("msigdbr", quietly = TRUE))
+      return(div(class = "text-warning small", "fgsea / msigdbr が必要です"))
+    colls <- gsea_collections()
+    tagList(
+      fluidRow(
+        column(8, selectInput("punkst_gsea_collection", t("gsea_collection"),
+                              choices = colls, selected = isolate(input$punkst_gsea_collection) %||% colls[1])),
+        column(4, div(style = "margin-top: 24px;",
+          actionButton("punkst_gsea_run", "GSEA", class = "btn-primary btn-sm", icon = icon("chart-bar"))))
+      ),
+      plotOutput("punkst_gsea_plot", height = "420px"),
+      DTOutput("punkst_gsea_table")
+    )
+  })
+
+  observeEvent(input$punkst_gsea_run, {
+    deg <- punkst_deg(); req(deg)
+    showNotification(t("gsea_running"), id = "pkgsea", type = "message", duration = NULL)
+    tryCatch({
+      ranks <- stats::setNames(deg$log2FC, deg$gene)
+      ranks <- ranks[is.finite(ranks) & !duplicated(names(ranks))]
+      ranks <- sort(ranks, decreasing = TRUE)
+      sel <- strsplit(input$punkst_gsea_collection, "\\|")[[1]]
+      catg <- sel[1]; subcat <- if (length(sel) >= 2) sel[2] else ""
+      msig <- msigdbr::msigdbr(species = input$gsea_species %||% "Homo sapiens", category = catg,
+                               subcategory = if (nzchar(subcat)) subcat else NULL)
+      pathways <- split(msig$gene_symbol, msig$gs_name)
+      set.seed(1)
+      fg <- fgsea::fgsea(pathways = pathways, stats = ranks, minSize = 5, maxSize = 500, nproc = n_workers())
+      fg <- fg[order(fg$padj), ]
+      punkst_pb_gsea(fg)
+      showNotification(sprintf(t("gsea_done"), nrow(fg), sum(fg$padj < 0.05, na.rm = TRUE)),
+                       id = "pkgsea", type = "message", duration = 6)
+    }, error = function(e) showNotification(paste(t("notify_error"), conditionMessage(e)), type = "error", id = "pkgsea"))
+  })
+
+  output$punkst_gsea_plot <- renderPlot({
+    fg <- punkst_pb_gsea(); req(fg); pt <- plot_theme()
+    top <- utils::head(fg[order(fg$padj), ], 20); top <- top[order(top$NES), ]
+    top$pathway <- factor(as.character(top$pathway), levels = as.character(top$pathway))
+    ggplot(top, aes(x = NES, y = pathway, fill = NES > 0)) + geom_col() +
+      scale_fill_manual(values = c("FALSE" = "#3C5488FF", "TRUE" = "#BC3C29FF"), guide = "none") +
+      labs(title = t("gsea_nes_title"), x = "NES", y = NULL) + theme_minimal(base_size = 11) +
+      theme(plot.background = element_rect(fill = pt$bg, color = NA), panel.background = element_rect(fill = pt$bg, color = NA),
+            text = element_text(color = pt$fg), axis.text = element_text(color = pt$fg2, size = 8),
+            plot.title = element_text(size = 13, face = "bold", color = pt$accent))
+  }, bg = "transparent")
+
+  output$punkst_gsea_table <- renderDT({
+    fg <- punkst_pb_gsea(); req(fg)
+    d <- as.data.frame(fg)[, intersect(c("pathway", "NES", "pval", "padj", "size"), names(fg)), drop = FALSE]
+    d$NES <- round(d$NES, 3); d$pval <- signif(d$pval, 3); d$padj <- signif(d$padj, 3)
+    datatable(d, rownames = FALSE, filter = "top",
+              options = list(pageLength = 15, order = list(list(3, "asc")), dom = "Blfrtip", scrollX = TRUE))
   })
 }
 
