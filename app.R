@@ -821,6 +821,17 @@ i18n <- list(
     niche_comp_need   = "細胞アノテーションファイル(clusters_meta)を読み込むと、各 niche の細胞型構成を表示できます。",
     niche_ct_col      = "細胞種の列",
     niche_comp_nact   = "選択中のサンプルには細胞型アノテーションがありません。別のサンプルを選ぶか、集計範囲を「全サンプル」にしてください。",
+    niche_ne_title    = "Niche 近接 enrichment（どの niche がどの niche と隣接しやすいか）",
+    niche_ne_title_dir = "Niche 近接 enrichment（行 i の周囲での 列 j; 正:隣接, 負:回避）",
+    niche_ne_run      = "Niche 近接解析を実行",
+    niche_ne_help     = "niche のタイル重心を点として k 近傍グラフを作り、niche 間の隣接の多さを、ラベルを並べ替えた帰無分布と比較して z-score 化します（spatial の Neighbors enrichment と同じ手法を niche に適用）。【対称】無向エッジ数で z(A,B)=z(B,A)。【方向あり】中心 niche i の近傍に j がどれだけ来るかを数え z(i→j)≠z(j→i)。選択中のサンプル（複数可）のタイルで計算します。",
+    niche_ne_noxy     = "タイルファイルに重心座標(X/Y)が見つかりません。",
+    niche_ne_axis_src = "行 = 中心 niche i（from）",
+    niche_ne_axis_nbr = "列 = 近傍 niche j（around）",
+    niche_ne_axis_sym = "niche",
+    niche_ne_sub_dir  = "読み方: 各行（中心 niche i）を横に見ると、その周りに隣接/回避する niche j が分かります。z(i→j)≠z(j→i)。",
+    niche_ne_sub_sym  = "対称指標のため行と列は交換可能（中心の区別なし）。z(A,B)=z(B,A)。方向を区別したい場合は「方向あり」を選んでください。",
+    dg_niche_ne_d     = "niche のタイル重心で k 近傍グラフを作り、niche 間の隣接の多さを並べ替え検定の z-score にします（spatial の Neighbors enrichment と同じ。正:隣接, 負:回避。対称 z(A,B)=z(B,A) と 方向あり z(A→B)≠z(B→A) を選べます）。",
     niche_comp_run    = "構成比を計算",
     niche_dl          = "Niche×細胞型 構成表をCSVで保存",
     niche_count       = "count",
@@ -1113,6 +1124,17 @@ i18n <- list(
     niche_comp_need   = "Load the cell annotation file (clusters_meta) to see the cell-type composition of each niche.",
     niche_ct_col      = "Cell-type column",
     niche_comp_nact   = "The selected sample has no cell-type annotation. Pick another sample, or set the scope to 'All samples'.",
+    niche_ne_title    = "Niche proximity enrichment (which niches sit next to which)",
+    niche_ne_title_dir = "Niche proximity enrichment (column j around row i; +: adjacent, -: avoided)",
+    niche_ne_run      = "Compute niche proximity",
+    niche_ne_help     = "Treats niche tile centroids as points, builds a kNN graph, and turns niche-niche adjacency into a z-score vs a label-shuffled null (the same Neighbors-enrichment method as the Spatial tab, applied to niches). [Symmetric] undirected edge counts, z(A,B)=z(B,A). [Directed] counts how often niche j appears around center niche i, so z(i→j)≠z(j→i). Computed on the tiles of the selected sample(s).",
+    niche_ne_noxy     = "No centroid coordinates (X/Y) found in the tile file.",
+    niche_ne_axis_src = "row = center niche i (from)",
+    niche_ne_axis_nbr = "col = neighbor niche j (around)",
+    niche_ne_axis_sym = "niche",
+    niche_ne_sub_dir  = "How to read: scan across a row (center niche i) to see which niches j are adjacent/avoided around it. z(i→j)≠z(j→i).",
+    niche_ne_sub_sym  = "Symmetric measure — rows and columns are interchangeable (no center). z(A,B)=z(B,A). Choose 'Directed' to distinguish direction.",
+    dg_niche_ne_d     = "Builds a kNN graph on niche tile centroids and turns niche-niche adjacency into a permutation z-score (same as the Spatial Neighbors-enrichment; +: adjacent, -: avoided; symmetric z(A,B)=z(B,A) or directed z(A→B)≠z(B→A)).",
     niche_comp_run    = "Compute composition",
     niche_dl          = "Download niche × cell-type table (CSV)",
     niche_count       = "count",
@@ -4849,13 +4871,13 @@ server <- function(input, output, session) {
         if (directed) t("spatial_ne_sub_dir") else t("spatial_ne_sub_sym"))
   })
 
-  spatial_ne_obj <- eventReactive(input$spatial_ne_run, {
-    set.seed(1)   # 再現性（間引き + 並べ替え検定を固定）
-    df <- spatial_nbr_df()
+  # --- Neighbors-enrichment エンジン（spatial / niche で共有） ---
+  # df: x, y(座標), col(ラベル factor), sample。点の k 近傍グラフでラベル間の
+  # 隣接を数え、サンプル内ラベル並べ替えの帰無分布と比較して z-score 行列を返す。
+  compute_ne <- function(df, k, nperm, directed) {
+    set.seed(1)
     validate(need(nlevels(droplevels(df$col)) >= 2, t("spatial_need_run")))
-    k <- max(2, input$spatial_ne_k %||% 6); nperm <- max(20, input$spatial_ne_perm %||% 100)
     levs <- levels(droplevels(df$col)); K <- length(levs)
-    directed <- identical(input$spatial_ne_mode %||% "symmetric", "directed")
     li <- setNames(seq_len(K), levs)
     src <- integer(0); dst <- integer(0); labv <- integer(0); sampv <- integer(0)
     base <- 0L; sid <- 0L
@@ -4866,43 +4888,31 @@ server <- function(input, output, session) {
       if (n <= k) next
       sid <- sid + 1L
       knn <- FNN::get.knn(cc, k = k)$nn.index
-      u <- rep(seq_len(n), times = k); v <- as.vector(knn)   # 各細胞 u → その近傍 v（有向）
+      u <- rep(seq_len(n), times = k); v <- as.vector(knn)   # 各点 u → その近傍 v（有向）
       src <- c(src, u + base); dst <- c(dst, v + base)
       labv <- c(labv, li[as.character(sub$col)]); sampv <- c(sampv, rep(sid, n))
       base <- base + n
     }
     validate(need(length(src) > 0, t("spatial_need_run")))
     if (directed) {
-      # 有向: 行 i(中心)→ 列 j(近傍)。i の細胞の近傍に j がどれだけ来るか。
-      # z(i→j)≠z(j→i) になり非対称な集積を表せる。
-      count_mat <- function(lab) {
-        as.matrix(table(factor(lab[src], levels = seq_len(K)),
-                        factor(lab[dst], levels = seq_len(K))))
-      }
+      count_mat <- function(lab) as.matrix(table(factor(lab[src], levels = seq_len(K)),
+                                                 factor(lab[dst], levels = seq_len(K))))
     } else {
-      # 対称: 無向ユニークエッジ数（squidpy 相当, z(A,B)=z(B,A)）
       e1 <- pmin(src, dst); e2 <- pmax(src, dst)
       key <- paste(e1, e2); dup <- !duplicated(key); e1 <- e1[dup]; e2 <- e2[dup]
       count_mat <- function(lab) {
         m <- as.matrix(table(factor(lab[e1], levels = seq_len(K)),
                              factor(lab[e2], levels = seq_len(K))))
-        m + base::t(m)   # 対称化（t は翻訳ヘルパーなので base::t）
+        m + base::t(m)
       }
     }
     obs <- count_mat(labv)
     sm <- matrix(0, K, K); sm2 <- matrix(0, K, K)
     sample_idx <- split(seq_along(labv), sampv)
-    # 各並べ替えに固定シードを割り当て（コア数に依らず再現性を担保）
     perm_seeds <- sample.int(.Machine$integer.max, nperm)
-    one_perm <- function(p) {
-      lp <- labv
-      for (idx in sample_idx) lp[idx] <- sample(labv[idx])   # サンプル内でシャッフル
-      count_mat(lp)
-    }
-    fmt_sec <- function(s) if (s < 60) paste0(round(s), "s") else
-      paste0(s %/% 60, "m", round(s %% 60), "s")
+    one_perm <- function(p) { lp <- labv; for (idx in sample_idx) lp[idx] <- sample(labv[idx]); count_mat(lp) }
+    fmt_sec <- function(s) if (s < 60) paste0(round(s), "s") else paste0(s %/% 60, "m", round(s %% 60), "s")
     nw <- n_workers()
-    # 進捗表示のためチャンク分割（チャンク内は並列、チャンク間で進捗更新）
     nchunk <- min(nperm, max(10L, nw * 4L))
     chunks <- split(seq_len(nperm), cut(seq_len(nperm), nchunk, labels = FALSE))
     msg <- if (nw > 1L) paste0(t("spatial_ne_prog"), " (", nw, " threads)") else t("spatial_ne_prog")
@@ -4912,44 +4922,35 @@ server <- function(input, output, session) {
         cms <- par_lapply_seeded(ch, one_perm, perm_seeds[ch])
         for (cm in cms) { sm <- sm + cm; sm2 <- sm2 + cm^2 }
         done <- done + length(ch)
-        el <- as.numeric(difftime(Sys.time(), t0, units = "secs"))
-        eta <- el / done * (nperm - done)
+        el <- as.numeric(difftime(Sys.time(), t0, units = "secs")); eta <- el / done * (nperm - done)
         setProgress(done / nperm, detail = sprintf(t("spatial_eta"), done, nperm, fmt_sec(eta)))
       }
     })
     mu <- sm / nperm; sdv <- sqrt(pmax(0, sm2 / nperm - mu^2))
     z <- (obs - mu) / ifelse(sdv == 0, NA, sdv)
-    dimnames(z) <- list(levs, levs)
-    attr(z, "directed") <- directed
+    dimnames(z) <- list(levs, levs); attr(z, "directed") <- directed
     z
-  }, ignoreInit = TRUE)
+  }
 
-  spatial_ne_ggplot <- reactive({
-    z <- spatial_ne_obj(); req(z)
-    pt <- plot_theme()
+  # --- z-score 行列のヒートマップ（spatial / niche で共有） ---
+  ne_heatmap_gg <- function(z, stars, pt, lab_x, lab_y, title) {
     directed <- isTRUE(attr(z, "directed"))
     levs <- rownames(z); K <- length(levs)
     zc <- z; zc[!is.finite(zc)] <- 0
-    # 並べ替え順: 方向ありでも行・列を同じ順にして、対角の対称位置で
-    # z(i→j) と z(j→i) を見比べられるよう、対称化した行列でクラスタリングする。
     zs <- (zc + base::t(zc)) / 2
     ord <- if (K > 2) levs[stats::hclust(stats::dist(zs))$order] else levs
-    # z-score を正規近似で両側p値に変換 → BH 補正
     pmat <- 2 * stats::pnorm(-abs(z))
     padj <- matrix(NA_real_, K, K, dimnames = dimnames(z))
     if (directed) {
-      # 各セルが独立した有向検定。対角(自己)以外をまとめて BH 補正。
       od <- which(row(pmat) != col(pmat) & is.finite(pmat))
       padj[od] <- stats::p.adjust(pmat[od], method = "BH")
     } else {
-      # ユニークなペア(上三角)で BH 補正 → 対称化
       ut <- upper.tri(pmat, diag = TRUE)
       padj[ut] <- stats::p.adjust(pmat[ut], method = "BH")
       padj[lower.tri(padj)] <- base::t(padj)[lower.tri(padj)]
     }
     star <- function(p) ifelse(is.na(p), "",
               ifelse(p < 0.001, "***", ifelse(p < 0.01, "**", ifelse(p < 0.05, "*", ""))))
-    # z[i,j]: as.vector は列優先 → i = rep(times=K)（中心/from）, j = rep(each=K)（近傍/around）
     df <- data.frame(
       i = factor(rep(levs, times = K), levels = ord),
       j = factor(rep(levs, each = K), levels = ord),
@@ -4958,25 +4959,17 @@ server <- function(input, output, session) {
     arrow <- if (directed) " → " else " - "
     df$tip <- paste0(df$i, arrow, df$j, "<br>z: ", round(df$z, 2),
                      "<br>padj: ", signif(df$padj, 2), " ", df$lab)
-    # 自己ペア(対角)の z は非常に大きく、それに合わせると非対角(=注目したい
-    # クラスター間)の色が白付近に潰れる。色の範囲は非対角の値を基準に決め、
-    # 範囲外(対角など)は squish で両端の色にクリップして 0付近の解像度を上げる。
     offdiag <- df$z[as.character(df$i) != as.character(df$j)]
     lim <- stats::quantile(abs(offdiag), 0.98, na.rm = TRUE)
     if (!is.finite(lim) || lim <= 0) lim <- max(abs(df$z), na.rm = TRUE)
-    lim <- max(lim, 2)   # 最低でも ±2 は表示
-    # 方向あり: y軸=中心 i(from), x軸=近傍 j(around)。行(i)を横に見ると i の周囲の集積。
+    lim <- max(lim, 2)
     p <- ggplot(df, aes(x = j, y = i, fill = z, text = tip)) +
-      geom_tile(color = "grey80", linewidth = 0.3)   # 白に潰れても枠で見える
-    if (isTRUE(input$spatial_ne_stars %||% TRUE))
-      p <- p + geom_text(aes(label = lab), size = 3, color = "black", fontface = "bold")
+      geom_tile(color = "grey80", linewidth = 0.3)
+    if (isTRUE(stars)) p <- p + geom_text(aes(label = lab), size = 3, color = "black", fontface = "bold")
     p +
       scale_fill_gradient2(low = "#3C5488FF", mid = "#F7F7F7", high = "#DC0000FF",
-                           midpoint = 0, limits = c(-lim, lim),
-                           oob = scales::squish, name = "z") +
-      labs(x = if (directed) t("spatial_ne_axis_nbr") else t("spatial_ne_axis_sym"),
-           y = if (directed) t("spatial_ne_axis_src") else t("spatial_ne_axis_sym"),
-           title = if (directed) t("spatial_ne_title_dir") else t("spatial_ne_title")) +
+                           midpoint = 0, limits = c(-lim, lim), oob = scales::squish, name = "z") +
+      labs(x = lab_x, y = lab_y, title = title) +
       theme_minimal(base_size = 11) +
       theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5, size = 8),
             axis.text.y = element_text(size = 8), panel.grid = element_blank(),
@@ -4985,6 +4978,22 @@ server <- function(input, output, session) {
             text = element_text(color = pt$fg), axis.text = element_text(color = pt$fg2),
             axis.title = element_text(color = pt$fg2, size = 9),
             plot.title = element_text(size = 13, face = "bold", color = pt$accent))
+  }
+
+  spatial_ne_obj <- eventReactive(input$spatial_ne_run, {
+    df <- spatial_nbr_df()
+    k <- max(2, input$spatial_ne_k %||% 6); nperm <- max(20, input$spatial_ne_perm %||% 100)
+    directed <- identical(input$spatial_ne_mode %||% "symmetric", "directed")
+    compute_ne(df, k, nperm, directed)
+  }, ignoreInit = TRUE)
+
+  spatial_ne_ggplot <- reactive({
+    z <- spatial_ne_obj(); req(z)
+    directed <- isTRUE(attr(z, "directed"))
+    ne_heatmap_gg(z, input$spatial_ne_stars %||% TRUE, plot_theme(),
+      lab_x = if (directed) t("spatial_ne_axis_nbr") else t("spatial_ne_axis_sym"),
+      lab_y = if (directed) t("spatial_ne_axis_src") else t("spatial_ne_axis_sym"),
+      title = if (directed) t("spatial_ne_title_dir") else t("spatial_ne_title"))
   })
   if (requireNamespace("plotly", quietly = TRUE)) {
     output$spatial_ne_plot <- plotly::renderPlotly({
@@ -5316,7 +5325,34 @@ server <- function(input, output, session) {
               else
                 plotOutput("niche_comp_plot", height = act_h(), width = act_w())
             )
-          }
+          },
+          hr(),
+          # --- Niche 近接 enrichment（spatial の Enrichment と同じ手法） ---
+          h6(class = "text-primary", t("niche_ne_title")),
+          fluidRow(
+            column(3, numericInput("niche_ne_k", t("spatial_ne_k"),
+                                   value = isolate(input$niche_ne_k) %||% 6, min = 2, max = 30, step = 1)),
+            column(3, numericInput("niche_ne_perm", t("spatial_ne_perm"),
+                                   value = isolate(input$niche_ne_perm) %||% 100, min = 20, max = 1000, step = 20)),
+            column(3, div(style = "margin-top: 30px;",
+              checkboxInput("niche_ne_stars", t("spatial_ne_stars"),
+                            value = isolate(input$niche_ne_stars) %||% TRUE))),
+            column(3, div(style = "margin-top: 24px;",
+              div(class = "d-flex align-items-center gap-2",
+                actionButton("niche_ne_run", t("niche_ne_run"), class = "btn-primary btn-sm",
+                             icon = icon("project-diagram")),
+                bslib::tooltip(tags$span(icon("circle-question"), style = "cursor: help;"),
+                               t("niche_ne_help"), placement = "right"))))
+          ),
+          radioButtons("niche_ne_mode", t("spatial_ne_mode"),
+            choices = c(setNames("symmetric", t("spatial_ne_mode_sym")),
+                        setNames("directed",  t("spatial_ne_mode_dir"))),
+            selected = isolate(input$niche_ne_mode) %||% "symmetric", inline = TRUE),
+          uiOutput("niche_ne_caption"),
+          if (requireNamespace("plotly", quietly = TRUE))
+            plotly::plotlyOutput("niche_ne_plot", height = act_h(), width = act_w())
+          else plotOutput("niche_ne_plot_static", height = act_h(), width = act_w()),
+          dg_section("dg_niche_ne", t("dg_title"), t("dg_niche_ne_d"), height = "300px")
         )
       }
     )
@@ -5568,6 +5604,50 @@ server <- function(input, output, session) {
       utils::write.csv(out, file, row.names = FALSE)
     }
   )
+
+  # --- Niche 近接 enrichment（spatial の Neighbors enrichment と同じ手法を niche に適用） ---
+  # niche のタイル重心(X,Y)を点、niche クラスターをラベルとして近接を z-score 化する。
+  niche_ne_df <- reactive({
+    td <- niche_tile(); req(td)
+    var <- input$niche_var %||% niche_var_choices(td)[1]; req(var %in% names(td))
+    validate(need(all(c("X", "Y") %in% names(td)), t("niche_ne_noxy")))
+    smp <- input$niche_sample
+    sub <- if (!is.null(smp) && length(smp) > 0) td[as.character(td$sample_id) %in% smp, , drop = FALSE] else td
+    req(nrow(sub) > 0)
+    data.frame(x = as.numeric(sub$X), y = as.numeric(sub$Y),
+               col = factor(as.character(sub[[var]]), levels = cluster_level_order(sub[[var]])),
+               sample = as.character(sub$sample_id), stringsAsFactors = FALSE)
+  })
+
+  niche_ne_obj <- eventReactive(input$niche_ne_run, {
+    df <- niche_ne_df()
+    k <- max(2, input$niche_ne_k %||% 6); nperm <- max(20, input$niche_ne_perm %||% 100)
+    directed <- identical(input$niche_ne_mode %||% "symmetric", "directed")
+    compute_ne(df, k, nperm, directed)
+  }, ignoreInit = TRUE)
+
+  niche_ne_ggplot <- reactive({
+    z <- niche_ne_obj(); req(z)
+    directed <- isTRUE(attr(z, "directed"))
+    ne_heatmap_gg(z, input$niche_ne_stars %||% TRUE, plot_theme(),
+      lab_x = if (directed) t("niche_ne_axis_nbr") else t("niche_ne_axis_sym"),
+      lab_y = if (directed) t("niche_ne_axis_src") else t("niche_ne_axis_sym"),
+      title = if (directed) t("niche_ne_title_dir") else t("niche_ne_title"))
+  })
+  if (requireNamespace("plotly", quietly = TRUE)) {
+    output$niche_ne_plot <- plotly::renderPlotly({
+      act_h(); act_w()
+      suppressWarnings(plotly::ggplotly(niche_ne_ggplot(), tooltip = "text"))
+    })
+    outputOptions(output, "niche_ne_plot", suspendWhenHidden = FALSE)
+  }
+  output$niche_ne_plot_static <- renderPlot({ suppressWarnings(print(niche_ne_ggplot())) }, bg = "transparent")
+  output$niche_ne_caption <- renderUI({
+    directed <- identical(input$niche_ne_mode %||% "symmetric", "directed")
+    div(class = "alert alert-light py-2 small mb-2", icon("circle-info"), " ",
+        if (directed) t("niche_ne_sub_dir") else t("niche_ne_sub_sym"))
+  })
+  output$dg_niche_ne <- renderPlot({ suppressWarnings(print(diagram_ne(plot_theme(), input$lang))) }, bg = "transparent")
 }
 
 # --- アプリ実行 ---
