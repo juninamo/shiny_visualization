@@ -838,6 +838,31 @@ i18n <- list(
     niche_count       = "count",
     niche_help        = "tessera で同定した niche のタイル(ポリゴン)を、niche クラスター(色)ごとに空間上に描画します。タイルの位置・形状は tile_meta、細胞アノテーション(ct)は clusters_meta から読み込みます。細胞アノテーションも読み込むと、各 niche を構成する細胞型の割合(構成比ヒートマップ・CSV)も確認できます。",
 
+    # Punkst (segmentation-free factor 分解)
+    punkst_settings   = "Punkst 表示設定",
+    punkst_help       = "Punkst（セグメンテーションフリーの空間factor分解）の cell-level 出力を空間上に表示します。各細胞の所属factor(top_factor)・アノテーションを、座標ファイルの x/y 位置に色分けして描画します。座標は別ファイル(細胞メタ/Seurat、cell_idまたは行名で結合)から取得します。Topicの詳細(色・marker遺伝子)は下の『Topic情報ファイル』から別途アップロードできます。",
+    punkst_factor_file = "Punkst factor/cluster ファイル (.rds)",
+    punkst_coord_file = "座標ファイル (x/y を含む .rds / Seurat)",
+    punkst_load       = "ファイルを読み込む",
+    punkst_loading    = "Punkst データを読み込み中...",
+    punkst_loaded     = "✅ 読み込み完了: 細胞 %s 個 / サンプル %s 件",
+    punkst_not_df     = "選択した factor ファイルが data.frame ではありません。",
+    punkst_nocoord    = "座標ファイルから x/y を結合できませんでした。cell_id または行名が一致するファイルを選んでください。",
+    punkst_color_up   = "Topic 色ファイル (color.rgb.tsv など・任意)",
+    punkst_info_up    = "Topic 情報ファイル (factor.info.tsv / de.tsv・任意)",
+    punkst_sample     = "サンプル",
+    punkst_colorby    = "色分け変数",
+    punkst_pt         = "点のサイズ",
+    punkst_flip       = "Y軸を反転",
+    punkst_run        = "描画",
+    punkst_placeholder = "ファイルを読み込み、サンプルを選んで「描画」を押してください",
+    punkst_pick_sample = "⚠️ 大規模データ(%s 細胞)です。サンプルを1つ選んでから「描画」してください。",
+    punkst_map_title  = "Punkst 空間マップ",
+    punkst_topic_title = "Topic (factor) 情報",
+    punkst_topic_need = "上の『Topic 情報ファイル』をアップロードすると、各 factor の上位 marker 遺伝子を表示します。",
+    punkst_topic_genes = "上位遺伝子",
+    punkst_legend_title = "Factor カラー",
+
     # プレースホルダ
     placeholder_load  = "\U0001F4C2 RDSファイルを選択して「読み込む」ボタンを押してください",
     placeholder_deg   = "上のパネルでグループを設定し「DEG解析を実行」ボタンを押してください",
@@ -1142,6 +1167,31 @@ i18n <- list(
     niche_count       = "count",
     niche_help        = "Draws the tiles (polygons) of niches identified by tessera, colored by niche cluster. Tile positions/shapes come from tile_meta and cell annotations (ct) from clusters_meta. If you also load the cell annotations, you can inspect the cell-type composition of each niche (heatmap + CSV).",
 
+    # Punkst (segmentation-free factorization)
+    punkst_settings   = "Punkst display settings",
+    punkst_help       = "Visualizes the cell-level output of Punkst (segmentation-free spatial factorization) in space. Each cell is colored by its assigned factor (top_factor) or annotation, placed at the x/y from a coordinate file. Coordinates come from a separate cell-meta/Seurat file (joined by cell_id or rownames). Topic details (colors, marker genes) can be uploaded separately below.",
+    punkst_factor_file = "Punkst factor/cluster file (.rds)",
+    punkst_coord_file = "Coordinate file (.rds / Seurat with x/y)",
+    punkst_load       = "Load files",
+    punkst_loading    = "Loading Punkst data...",
+    punkst_loaded     = "✅ Loaded: %s cells / %s samples",
+    punkst_not_df     = "The selected factor file is not a data.frame.",
+    punkst_nocoord    = "Could not join x/y from the coordinate file. Pick a file whose cell_id or rownames match.",
+    punkst_color_up   = "Topic color file (color.rgb.tsv, optional)",
+    punkst_info_up    = "Topic info file (factor.info.tsv / de.tsv, optional)",
+    punkst_sample     = "Sample",
+    punkst_colorby    = "Color variable",
+    punkst_pt         = "Point size",
+    punkst_flip       = "Flip Y axis",
+    punkst_run        = "Draw",
+    punkst_placeholder = "Load files, pick a sample, and click 'Draw'",
+    punkst_pick_sample = "⚠️ Large dataset (%s cells). Pick one sample, then click Draw.",
+    punkst_map_title  = "Punkst spatial map",
+    punkst_topic_title = "Topic (factor) info",
+    punkst_topic_need = "Upload a 'Topic info file' above to see the top marker genes of each factor.",
+    punkst_topic_genes = "Top genes",
+    punkst_legend_title = "Factor colors",
+
     # Placeholders
     placeholder_load  = "\U0001F4C2 Select an RDS file and click 'Load'",
     placeholder_deg   = "Configure groups above and click 'Run DEG Analysis'",
@@ -1289,6 +1339,16 @@ ui <- page_sidebar(
       card_body(
         class = "p-2",
         uiOutput("niche_panel_ui")
+      )
+    ),
+
+    # Punkst (segmentation-free factor分解) の cell-level 出力を空間表示する独立タブ
+    nav_panel(
+      title = "\U0001F9EE Punkst",
+      value = "punkst",
+      card_body(
+        class = "p-2",
+        uiOutput("punkst_panel_ui")
       )
     )
   )
@@ -5682,6 +5742,212 @@ server <- function(input, output, session) {
         if (directed) t("niche_ne_sub_dir") else t("niche_ne_sub_sym"))
   })
   output$dg_niche_ne <- renderPlot({ suppressWarnings(print(diagram_ne(plot_theme(), input$lang))) }, bg = "transparent")
+
+  # =========================================================================
+  # Punkst タブ — segmentation-free factor 分解の cell-level 出力を空間表示
+  # =========================================================================
+  options(shiny.maxRequestSize = 60 * 1024^2)   # Topic情報tsvのアップロード用
+  punkst_df     <- reactiveVal(NULL)   # top_factor, anno_clusters, merged_res_0.20, sample_id, x, y
+  punkst_colors <- reactiveVal(NULL)   # factor -> hex
+  punkst_info   <- reactiveVal(NULL)   # factor -> 上位遺伝子 (data.frame)
+  punkst_spec   <- reactiveVal(NULL)
+
+  # 座標(x/y)候補列を探す
+  punkst_xy_cols <- function(m) {
+    cand <- list(c("x", "y"), c("x_centroid", "y_centroid"), c("sdimx", "sdimy"),
+                 c("X", "Y"), c("imagecol", "imagerow"))
+    for (p in cand) if (all(p %in% names(m)) && is.numeric(m[[p[1]]]) && is.numeric(m[[p[2]]])) return(p)
+    NULL
+  }
+  # 色分け候補(カテゴリ列)
+  punkst_var_choices <- function(df) {
+    pref <- intersect(c("top_factor", "anno_clusters", "merged_res_0.20"), names(df))
+    extra <- names(df)[vapply(df, function(v) is.factor(v) || is.character(v) ||
+                              (is.numeric(v) && length(unique(v)) <= 80), logical(1))]
+    extra <- setdiff(extra, c(pref, "cell_id", "sample_id", "x", "y"))
+    c(pref, extra)
+  }
+
+  output$punkst_panel_ui <- renderUI({
+    lang <- input$lang
+    df <- punkst_df()
+    fac_default <- grep("punkst", rds_files, ignore.case = TRUE, value = TRUE)[1] %||% rds_files[1]
+    coord_default <- grep("Merged_ST_fine_cell_type_Baysor_meta", rds_files, value = TRUE)[1] %||%
+                     grep("_meta\\.rds$", rds_files, value = TRUE)[1] %||% rds_files[1]
+    loader <- div(class = "card mb-3", div(class = "card-body",
+      h6(t("punkst_settings"), class = "card-title text-primary"),
+      div(class = "alert alert-secondary py-2 small mb-2", icon("circle-info"), " ", t("punkst_help")),
+      fluidRow(
+        column(6, selectInput("punkst_factor_path", t("punkst_factor_file"), choices = rds_files,
+                              selected = isolate(input$punkst_factor_path) %||% fac_default)),
+        column(4, selectInput("punkst_coord_path", t("punkst_coord_file"), choices = rds_files,
+                              selected = isolate(input$punkst_coord_path) %||% coord_default)),
+        column(2, div(style = "margin-top: 30px;",
+          actionButton("punkst_load", t("punkst_load"), class = "btn-primary btn-sm", icon = icon("folder-open"))))
+      ),
+      fluidRow(
+        column(6, fileInput("punkst_color_file", t("punkst_color_up"), accept = c(".tsv", ".txt", ".csv"))),
+        column(6, fileInput("punkst_info_file", t("punkst_info_up"), accept = c(".tsv", ".txt", ".csv")))
+      ),
+      uiOutput("punkst_load_status")
+    ))
+    if (is.null(df)) {
+      return(tagList(loader, div(class = "text-center text-muted py-3", h6(t("punkst_placeholder")))))
+    }
+    samples <- sort(unique(as.character(df$sample_id)))
+    vars <- punkst_var_choices(df)
+    tagList(
+      loader,
+      div(class = "card mb-3", div(class = "card-body",
+        fluidRow(
+          column(4, selectizeInput("punkst_sample", t("punkst_sample"), choices = samples,
+                                   selected = isolate(input$punkst_sample) %||% samples[1],
+                                   multiple = TRUE, options = list(plugins = list("remove_button")))),
+          column(4, selectInput("punkst_colorby", t("punkst_colorby"), choices = vars,
+                                selected = isolate(input$punkst_colorby) %||% vars[1])),
+          column(2, sliderInput("punkst_pt", t("punkst_pt"), min = 0.1, max = 4,
+                                value = isolate(input$punkst_pt) %||% 0.6, step = 0.1)),
+          column(2, div(style = "margin-top: 14px;",
+            checkboxInput("punkst_flip", t("punkst_flip"), value = isolate(input$punkst_flip) %||% TRUE)))
+        ),
+        actionButton("punkst_run", t("punkst_run"), class = "btn-success", icon = icon("play"))
+      )),
+      h6(class = "text-primary", t("punkst_map_title")),
+      if (requireNamespace("plotly", quietly = TRUE))
+        plotly::plotlyOutput("punkst_plot", height = act_h(), width = act_w())
+      else plotOutput("punkst_plot_static", height = act_h(), width = act_w()),
+      hr(),
+      h6(class = "text-primary", t("punkst_topic_title")),
+      if (is.null(punkst_info()))
+        div(class = "alert alert-light py-2 small", icon("circle-info"), " ", t("punkst_topic_need"))
+      else DTOutput("punkst_topic_table")
+    )
+  })
+
+  output$punkst_load_status <- renderUI({
+    df <- punkst_df(); if (is.null(df)) return(NULL)
+    extras <- c(if (!is.null(punkst_colors())) "color", if (!is.null(punkst_info())) "info")
+    div(class = "small text-success mt-1",
+        sprintf(t("punkst_loaded"), format(nrow(df), big.mark = ","), length(unique(df$sample_id))),
+        if (length(extras)) paste0(" [", paste(extras, collapse = ", "), "]"))
+  })
+
+  observeEvent(input$punkst_load, {
+    req(input$punkst_factor_path)
+    withProgress(message = t("punkst_loading"), value = NULL, {
+      tryCatch({
+        fac <- readRDS(file.path(app_dir, input$punkst_factor_path))
+        if (inherits(fac, "Seurat")) fac <- fac@meta.data
+        if (!is.data.frame(fac)) { showNotification(t("punkst_not_df"), type = "error"); return() }
+        # 座標(x/y)を座標ファイルから 行名 / cell_id 一致で結合
+        cm <- readRDS(file.path(app_dir, input$punkst_coord_path))
+        if (inherits(cm, "Seurat")) cm <- cm@meta.data
+        ok <- FALSE
+        if (is.data.frame(cm)) {
+          xy <- punkst_xy_cols(cm)
+          if (!is.null(xy)) {
+            idx <- match(rownames(fac), rownames(cm))
+            if (mean(!is.na(idx)) < 0.5 && "cell_id" %in% names(fac) && "cell_id" %in% names(cm))
+              idx <- match(as.character(fac$cell_id), as.character(cm$cell_id))
+            if (mean(!is.na(idx)) >= 0.5) {
+              fac$x <- as.numeric(cm[[xy[1]]][idx]); fac$y <- as.numeric(cm[[xy[2]]][idx]); ok <- TRUE
+            }
+          }
+        }
+        if (!ok) { showNotification(t("punkst_nocoord"), type = "error", duration = 12); return() }
+        if (is.null(fac$sample_id)) fac$sample_id <- "sample1"
+        punkst_df(fac)
+      }, error = function(e) showNotification(paste(t("notify_error"), conditionMessage(e)),
+                                              type = "error", duration = 12))
+    })
+  })
+
+  # Topic 色ファイル(tsv) のアップロード → factor -> hex
+  observeEvent(input$punkst_color_file, {
+    f <- input$punkst_color_file; req(f)
+    tryCatch({
+      d <- utils::read.delim(f$datapath, stringsAsFactors = FALSE, check.names = FALSE)
+      hexcol <- grep("hex", names(d), ignore.case = TRUE, value = TRUE)[1]
+      if (is.null(hexcol)) hexcol <- grep("color", names(d), ignore.case = TRUE, value = TRUE)[1]
+      namecol <- if ("Name" %in% names(d)) "Name" else names(d)[ncol(d)]
+      if (!is.null(hexcol)) punkst_colors(setNames(as.character(d[[hexcol]]), as.character(d[[namecol]])))
+    }, error = function(e) showNotification(conditionMessage(e), type = "warning"))
+  })
+  # Topic 情報ファイル(tsv) のアップロード → 表示用 data.frame
+  observeEvent(input$punkst_info_file, {
+    f <- input$punkst_info_file; req(f)
+    tryCatch({
+      d <- utils::read.delim(f$datapath, stringsAsFactors = FALSE, check.names = FALSE)
+      punkst_info(d)
+    }, error = function(e) showNotification(conditionMessage(e), type = "warning"))
+  })
+
+  observeEvent(input$punkst_run, {
+    df <- punkst_df()
+    if (!is.null(df) && nrow(df) > 300000L &&
+        (is.null(input$punkst_sample) || length(input$punkst_sample) == 0)) {
+      showNotification(sprintf(t("punkst_pick_sample"), format(nrow(df), big.mark = ",")),
+                       type = "warning", duration = 10); return()
+    }
+    punkst_spec(list(sample = input$punkst_sample, colorby = input$punkst_colorby,
+                     pt = input$punkst_pt %||% 0.6, flip = isTRUE(input$punkst_flip)))
+  })
+
+  punkst_plot_ggplot <- reactive({
+    spec <- punkst_spec(); df <- punkst_df(); req(spec, df)
+    cv <- spec$colorby; req(cv %in% names(df))
+    sub <- df
+    if (!is.null(spec$sample) && length(spec$sample) > 0)
+      sub <- sub[as.character(sub$sample_id) %in% spec$sample, , drop = FALSE]
+    req(nrow(sub) > 0)
+    pt <- plot_theme()
+    val <- as.character(sub[[cv]])
+    levs <- cluster_level_order(val)
+    if (identical(cv, "top_factor") && !is.null(punkst_colors())) {
+      pc <- punkst_colors(); pal <- pc[levs]; pal[is.na(pal)] <- "grey70"; names(pal) <- levs
+    } else {
+      lc <- lineage_colors_or_null(levs)
+      pal <- if (!is.null(lc)) lc else niche_color_palette(levs)
+    }
+    d <- data.frame(x = sub$x, y = if (isTRUE(spec$flip)) -sub$y else sub$y,
+                    col = factor(val, levels = levs), sample = as.character(sub$sample_id),
+                    text = paste0(cv, ": ", val), stringsAsFactors = FALSE)
+    multi <- length(unique(d$sample)) > 1
+    if (multi) {   # 複数サンプルは各々を原点中心に揃え facet 固定スケール
+      ctr <- function(z) z - mean(range(z, na.rm = TRUE))
+      d$x <- stats::ave(d$x, d$sample, FUN = ctr); d$y <- stats::ave(d$y, d$sample, FUN = ctr)
+    }
+    p <- ggplot(d, aes(x = x, y = y, color = col, text = text)) +
+      geom_point(size = spec$pt %||% 0.6) +
+      scale_color_manual(values = pal, name = cv, drop = FALSE) +
+      coord_equal() +
+      labs(title = if (multi) sprintf("%d samples", length(unique(d$sample))) else d$sample[1],
+           x = NULL, y = NULL) +
+      theme_minimal(base_size = 12) +
+      theme(plot.background = element_rect(fill = pt$bg, color = NA),
+            panel.background = element_rect(fill = pt$bg, color = NA), panel.grid = element_blank(),
+            text = element_text(color = pt$fg), axis.text = element_text(color = pt$fg2),
+            legend.position = if (nlevels(d$col) > 55) "none" else "right",
+            legend.key.size = grid::unit(0.7, "lines"),
+            plot.title = element_text(size = 14, face = "bold", color = pt$accent)) +
+      guides(color = guide_legend(override.aes = list(size = 3), ncol = if (nlevels(d$col) > 26) 2 else 1))
+    if (multi) p <- p + facet_wrap(~ sample)
+    p
+  })
+  if (requireNamespace("plotly", quietly = TRUE)) {
+    output$punkst_plot <- plotly::renderPlotly({
+      act_h(); act_w()
+      suppressWarnings(plotly::toWebGL(plotly::ggplotly(punkst_plot_ggplot(), tooltip = "text")))
+    })
+    outputOptions(output, "punkst_plot", suspendWhenHidden = FALSE)
+  }
+  output$punkst_plot_static <- renderPlot({ suppressWarnings(print(punkst_plot_ggplot())) }, bg = "transparent")
+
+  output$punkst_topic_table <- renderDT({
+    d <- punkst_info(); req(d)
+    datatable(d, rownames = FALSE, filter = "top",
+              options = list(pageLength = 15, dom = "Blfrtip", scrollX = TRUE))
+  })
 }
 
 # --- アプリ実行 ---
