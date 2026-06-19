@@ -1167,6 +1167,11 @@ ui <- page_sidebar(
       $(document).on('shown.bs.tab shown.bs.collapse shown.bs.accordion', function(){
         nudge(); setTimeout(nudge, 200);
       });
+      // Spatial 系の出力(プロット)の値が届いた直後に再サイズして、ウィジェットが
+      // 確実に描画されるようにする（実行後に図が出ない問題への対策）
+      $(document).on('shiny:value', function(e){
+        if(e && e.name && e.name.indexOf('spatial_')===0){ setTimeout(nudge, 60); }
+      });
     })();
   ")),
 
@@ -4444,6 +4449,7 @@ server <- function(input, output, session) {
     }
 
     output$spatial_plotly <- plotly::renderPlotly({
+      act_h(); act_w()
       spec <- spatial_map_spec(); pr <- spec$pr; pt <- plot_theme()
       df <- pr$df; flip <- spec$flip; colorvar <- spec$colorvar
       hl <- spec$highlight
@@ -4480,6 +4486,7 @@ server <- function(input, output, session) {
       plotly::layout(fig, paper_bgcolor = pt$bg, plot_bgcolor = pt$bg,
                      font = list(color = pt$fg), legend = list(font = list(color = pt$fg)))
     })
+    outputOptions(output, "spatial_plotly", suspendWhenHidden = FALSE)
   }
 
   output$spatial_plot <- renderPlot({
@@ -4695,8 +4702,10 @@ server <- function(input, output, session) {
   })
   if (requireNamespace("plotly", quietly = TRUE)) {
     output$spatial_nbr_plot <- plotly::renderPlotly({
+      act_h(); act_w()   # サイズ変更でUIが再描画されても図が消えないよう再描画依存にする
       suppressWarnings(plotly::ggplotly(spatial_nbr_ggplot(), tooltip = "text"))
     })
+    outputOptions(output, "spatial_nbr_plot", suspendWhenHidden = FALSE)
   }
   output$spatial_nbr_plot_static <- renderPlot({ suppressWarnings(print(spatial_nbr_ggplot())) }, bg = "transparent")
 
@@ -4790,8 +4799,10 @@ server <- function(input, output, session) {
   })
   if (requireNamespace("plotly", quietly = TRUE)) {
     output$spatial_co_plot <- plotly::renderPlotly({
+      act_h(); act_w()
       suppressWarnings(plotly::ggplotly(spatial_co_ggplot(), tooltip = "text"))
     })
+    outputOptions(output, "spatial_co_plot", suspendWhenHidden = FALSE)
   }
   output$spatial_co_plot_static <- renderPlot({ suppressWarnings(print(spatial_co_ggplot())) }, bg = "transparent")
 
@@ -4977,8 +4988,10 @@ server <- function(input, output, session) {
   })
   if (requireNamespace("plotly", quietly = TRUE)) {
     output$spatial_ne_plot <- plotly::renderPlotly({
+      act_h(); act_w()
       suppressWarnings(plotly::ggplotly(spatial_ne_ggplot(), tooltip = "text"))
     })
+    outputOptions(output, "spatial_ne_plot", suspendWhenHidden = FALSE)
   }
   output$spatial_ne_plot_static <- renderPlot({ spatial_ne_ggplot() }, bg = "transparent")
 
