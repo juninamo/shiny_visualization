@@ -805,6 +805,7 @@ i18n <- list(
     niche_loaded_cells= " / 細胞 %s 個",
     niche_not_df      = "選択ファイルが想定形式(data.frame)ではありません。",
     niche_no_geom     = "タイルファイルにポリゴン情報(shape列)が見つかりません。",
+    niche_no_geom2    = "選択したタイルファイル「%s」にポリゴン列(shape/geometry/sfc)が見つかりません。検出された列: %s。『タイル(niche polygon)ファイル』に tile_meta（ポリゴン入り）を選んでいるか確認してください（細胞アノテーションファイルを誤って選んでいませんか？）。",
     niche_sample      = "サンプル",
     niche_var         = "Niche 変数 (色分け)",
     niche_highlight   = "強調する niche (任意・複数可)",
@@ -1108,6 +1109,7 @@ i18n <- list(
     niche_loaded_cells= " / %s cells",
     niche_not_df      = "The selected file is not in the expected format (data.frame).",
     niche_no_geom     = "No polygon information (shape column) found in the tile file.",
+    niche_no_geom2    = "No polygon column (shape/geometry/sfc) in the selected tile file '%s'. Detected columns: %s. Make sure the 'Tile (niche polygon) file' selector points to a tile_meta (with polygons) — did you accidentally pick the cell-annotation file?",
     niche_sample      = "Sample",
     niche_var         = "Niche variable (color)",
     niche_highlight   = "Highlight niche(s) (optional)",
@@ -5375,10 +5377,24 @@ server <- function(input, output, session) {
         tp <- file.path(app_dir, input$niche_tile_path)
         td <- readRDS(tp)
         if (!is.data.frame(td)) { showNotification(t("niche_not_df"), type = "error"); return() }
-        if (!("shape" %in% names(td)) && !("geometry" %in% names(td))) {
-          showNotification(t("niche_no_geom"), type = "error"); return()
+        # ポリゴン列を探す: shape / geometry / 任意の sfc 列（sf オブジェクトも対応）
+        geom_col <- NA_character_
+        if ("shape" %in% names(td)) {
+          geom_col <- "shape"
+        } else if (inherits(td, "sf")) {
+          geom_col <- attr(td, "sf_column"); if (is.null(geom_col)) geom_col <- "geometry"
+        } else if ("geometry" %in% names(td)) {
+          geom_col <- "geometry"
+        } else {
+          sfc_cols <- names(td)[vapply(td, function(col) inherits(col, "sfc"), logical(1))]
+          if (length(sfc_cols) > 0) geom_col <- sfc_cols[1]
         }
-        if (!("shape" %in% names(td)) && "geometry" %in% names(td)) td$shape <- td$geometry
+        if (is.na(geom_col) || !(geom_col %in% names(td))) {
+          showNotification(sprintf(t("niche_no_geom2"), input$niche_tile_path,
+                                   paste(utils::head(names(td), 10), collapse = ", ")),
+                           type = "error", duration = 14); return()
+        }
+        if (!identical(geom_col, "shape")) td$shape <- td[[geom_col]]
         if (is.null(td$sample_id)) td$sample_id <- "sample1"
         if (is.null(td$id)) td$id <- rownames(td)
         niche_tile(td)
