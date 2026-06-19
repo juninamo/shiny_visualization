@@ -559,7 +559,12 @@ i18n <- list(
     spatial_co_x      = "距離",
     spatial_co_y      = "Co-occurrence 比 (P(j|i,d)/P(j))",
     spatial_co_title  = "%s 周辺における各クラスターの共局在 (>1:濃縮, <1:希薄)",
-    spatial_co_help   = "squidpy の co_occurrence を参考にした指標です。対象クラスター i の細胞から距離 d の範囲(リング)内に他クラスター j の細胞が見つかる条件付き確率 P(j | i, d) を、全体での j の割合 P(j) で割った比を距離ごとに描きます。1より大きいと i の周囲に j が濃縮、1未満だと希薄を意味します。サンプルごとに計算し平均±標準偏差をリボン表示します。",
+    spatial_co_help   = "squidpy の co_occurrence を参考にした指標です。対象クラスター i の細胞から距離 d の範囲(リング)内に他クラスター j の細胞が見つかる条件付き確率 P(j | i, d) を、全体での j の割合 P(j) で割った比を距離ごとに描きます。1より大きいと i の周囲に j が濃縮、1未満だと希薄を意味します。サンプルごとに計算し、帯は下の「信頼帯」で選べます(既定は平均の95%信頼区間)。",
+    spatial_band      = "信頼帯",
+    spatial_band_se95 = "95% 信頼区間（平均の標準誤差）",
+    spatial_band_se   = "±標準誤差 (SE)",
+    spatial_band_sd   = "±標準偏差 (SD・サンプル間のばらつき)",
+    spatial_band_none = "表示しない",
     spatial_ne        = "Neighbors enrichment",
     spatial_ne_run    = "Neighbors enrichment を計算",
     spatial_ne_k      = "近傍数 k",
@@ -826,7 +831,12 @@ i18n <- list(
     spatial_co_x      = "Distance",
     spatial_co_y      = "Co-occurrence ratio (P(j|i,d)/P(j))",
     spatial_co_title  = "Co-occurrence of clusters around %s (>1: enriched, <1: depleted)",
-    spatial_co_help   = "Inspired by squidpy's co_occurrence. For target cluster i, the conditional probability P(j | i, d) of finding cluster j within a distance ring d of i is divided by the overall fraction P(j); plotted vs distance. >1 means j is enriched near i, <1 depleted. Computed per sample; mean +/- SD shown as a band.",
+    spatial_co_help   = "Inspired by squidpy's co_occurrence. For target cluster i, the conditional probability P(j | i, d) of finding cluster j within a distance ring d of i is divided by the overall fraction P(j); plotted vs distance. >1 means j is enriched near i, <1 depleted. Computed per sample; the band type is selectable below (default: 95% CI of the mean).",
+    spatial_band      = "Confidence band",
+    spatial_band_se95 = "95% CI (SE of the mean)",
+    spatial_band_se   = "±1 SE",
+    spatial_band_sd   = "±1 SD (between-sample spread)",
+    spatial_band_none = "None",
     spatial_ne        = "Neighbors enrichment",
     spatial_ne_run    = "Compute neighbors enrichment",
     spatial_ne_k      = "Neighbors k",
@@ -3970,7 +3980,15 @@ server <- function(input, output, session) {
         # 近傍解析(Neighborhood/Co-occurrence/Enrichment)用のサンプル選択
         # （3タブで共有。Map以外のサブタブ表示時のみ）
         conditionalPanel("input.spatial_subtab && input.spatial_subtab != 'map'",
-          uiOutput("spatial_nbr_sample_ui"))
+          uiOutput("spatial_nbr_sample_ui")),
+        # 信頼帯の種類(Neighborhood / Co-occurrence の曲線で共有)
+        conditionalPanel("input.spatial_subtab == 'nbr' || input.spatial_subtab == 'co'",
+          radioButtons("spatial_band", t("spatial_band"),
+            choices = c(setNames("se95", t("spatial_band_se95")),
+                        setNames("se",   t("spatial_band_se")),
+                        setNames("sd",   t("spatial_band_sd")),
+                        setNames("none", t("spatial_band_none"))),
+            selected = isolate(input$spatial_band) %||% "se95", inline = TRUE))
       )),
       navset_card_tab(
         id = "spatial_subtab",
@@ -4381,19 +4399,31 @@ server <- function(input, output, session) {
       if (is.null(dim(fr))) fr <- matrix(fr, ncol = 1)
       ym <- rowMeans(fr); ys <- if (ncol(fr) > 1) apply(fr, 1, stats::sd) else rep(0, nrow(fr))
       data.frame(anchor = r$A, cluster = r$B, x = grid, ymean = ym,
-                 ylow = pmax(0, ym - ys), yhigh = pmin(1, ym + ys),
-                 nsamp = ncol(fr), stringsAsFactors = FALSE)
+                 ysd = ys, nsamp = ncol(fr), stringsAsFactors = FALSE)
     }))
   }, ignoreInit = TRUE)
 
   # 折れ線 + 信頼帯(リボン) の共通描画（co-occurrence でも再利用）
-  spatial_curve_ggplot <- function(d, xlab, ylab, title_fmt, logx = TRUE, hline = NULL) {
+  # 帯の種類は input$spatial_band で選択（既定: 平均の95%信頼区間 = ±1.96·SE）。
+  # SD はサンプル間のばらつきで広くなりがちなので、平均の不確かさを示す SE/CI を既定にする。
+  spatial_curve_ggplot <- function(d, xlab, ylab, title_fmt, logx = TRUE, hline = NULL, clamp_hi = Inf) {
     pt <- plot_theme()
     d$cluster <- factor(d$cluster, levels = cluster_level_order(unique(d$cluster)))
     d$tip <- paste0(d$cluster, "<br>", xlab, ": ", signif(d$x, 3),
                     "<br>", ylab, ": ", round(d$ymean, 3))
+    band <- input$spatial_band %||% "se95"
+    show_band <- !identical(band, "none") && !is.null(d$ysd) && any(d$nsamp > 1)
+    if (show_band) {
+      half <- switch(band,
+                     sd   = d$ysd,
+                     se   = d$ysd / sqrt(pmax(1, d$nsamp)),
+                     se95 = 1.96 * d$ysd / sqrt(pmax(1, d$nsamp)),
+                     d$ysd)
+      d$ylow  <- pmax(0, d$ymean - half)
+      d$yhigh <- pmin(clamp_hi, d$ymean + half)
+    }
     p <- ggplot(d, aes(x = x, group = cluster))
-    if (any(d$nsamp > 1)) p <- p +
+    if (show_band) p <- p +
       geom_ribbon(aes(ymin = ylow, ymax = yhigh, fill = cluster), alpha = 0.15, color = NA)
     p <- p + geom_line(aes(y = ymean, color = cluster, text = tip), linewidth = 0.6)
     if (!is.null(hline)) p <- p + geom_hline(yintercept = hline, linetype = "dashed",
@@ -4416,7 +4446,7 @@ server <- function(input, output, session) {
 
   spatial_nbr_ggplot <- reactive({
     spatial_curve_ggplot(spatial_nbr_obj(), t("spatial_nbr_x"), t("spatial_nbr_y"),
-                         t("spatial_nbr_title"))
+                         t("spatial_nbr_title"), clamp_hi = 1)
   })
   if (requireNamespace("plotly", quietly = TRUE)) {
     output$spatial_nbr_plot <- plotly::renderPlotly({
@@ -4499,7 +4529,7 @@ server <- function(input, output, session) {
         keep <- is.finite(ym)
         if (!any(keep)) next
         out[[paste(A, j)]] <- data.frame(anchor = A, cluster = j, x = mids[keep],
-          ymean = ym[keep], ylow = pmax(0, (ym - ys)[keep]), yhigh = (ym + ys)[keep],
+          ymean = ym[keep], ysd = ys[keep],
           nsamp = ncol(vals), stringsAsFactors = FALSE)
       }
     }
