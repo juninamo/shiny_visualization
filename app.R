@@ -5310,8 +5310,8 @@ server <- function(input, output, session) {
     # ファイル名のデフォルト(tile_meta = タイル / 細胞アノテーションは
     # Merged_ST_fine_cell_type_meta.rds を優先、無ければ *clusters_meta*)
     tile_default  <- grep("tile_meta", rds_files, value = TRUE)[1] %||% rds_files[1]
-    cells_default <- if ("Merged_ST_fine_cell_type_meta.rds" %in% rds_files)
-                       "Merged_ST_fine_cell_type_meta.rds"
+    cells_default <- if ("Merged_ST_fine_cell_type_Baysor_meta.rds" %in% rds_files)
+                       "Merged_ST_fine_cell_type_Baysor_meta.rds"
                      else grep("^Merged_ST_fine_cell_type.*meta\\.rds$", rds_files, value = TRUE)[1] %||%
                           grep("clusters_meta", rds_files, value = TRUE)[1] %||% ""
     tagList(
