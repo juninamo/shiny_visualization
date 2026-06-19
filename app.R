@@ -527,6 +527,15 @@ i18n <- list(
     spatial_flip      = "Y軸を反転",
     spatial_none      = "このオブジェクトに位置座標(x/y)が見つかりません。",
     spatial_ds        = "空間データ",
+    spatial_load_title = "空間データの独立読み込み（大規模データ向け）",
+    spatial_load_hint = "メインローダーとは別に、この空間データだけをこのタブで読み込みます。他タブ（発現/DEG/Heatmap等）には渡さないので、巨大データでもアプリ全体が固まりにくくなります。",
+    spatial_load_file = "空間データファイル (.rds)",
+    spatial_load_btn  = "読み込む",
+    spatial_loading   = "空間データを読み込み中…（大きいファイルは数十秒かかります）",
+    spatial_loaded    = "✅ 読み込み完了: %s 細胞 / FOV %s 個",
+    spatial_load_clear = "解除（メインのデータに戻す）",
+    spatial_not_seurat = "Seurat オブジェクトではありません。",
+    spatial_pick_sample = "⚠️ 大規模データ（%s 細胞）です。サンプルを1つ選んでから「描画」してください（全サンプル一括描画は重すぎます）。",
     spatial_seg       = "セグメンテーション(細胞境界)を表示",
     spatial_by        = "色分けの基準",
     spatial_by_meta   = "メタデータ変数",
@@ -785,6 +794,15 @@ i18n <- list(
     spatial_flip      = "Flip Y axis",
     spatial_none      = "No spatial coordinates (x/y) found in this object.",
     spatial_ds        = "Spatial dataset",
+    spatial_load_title = "Load a spatial dataset independently (for large data)",
+    spatial_load_hint = "Loads this spatial object only into this tab, separately from the main loader. It is not handed to the other tabs (Expression/DEG/Heatmap/…), so even huge datasets are far less likely to freeze the whole app.",
+    spatial_load_file = "Spatial data file (.rds)",
+    spatial_load_btn  = "Load",
+    spatial_loading   = "Loading spatial data… (large files take tens of seconds)",
+    spatial_loaded    = "✅ Loaded: %s cells / %s FOVs",
+    spatial_load_clear = "Clear (revert to the main dataset)",
+    spatial_not_seurat = "Not a Seurat object.",
+    spatial_pick_sample = "⚠️ Large dataset (%s cells). Pick one sample, then click Draw (drawing all samples at once is too heavy).",
     spatial_seg       = "Show segmentation (cell boundaries)",
     spatial_by        = "Color by",
     spatial_by_meta   = "Metadata variable",
@@ -1181,7 +1199,8 @@ server <- function(input, output, session) {
     updateSelectizeInput(session, "gene", choices = genes, selected = sel, server = TRUE)
   })
   observe({
-    if (!isTRUE(data_loaded())) return()
+    # 独立読み込みした空間データだけがある場合(data_loaded=FALSE)でも更新する
+    if (!isTRUE(data_loaded()) && is.null(spatial_obj_loaded())) return()
     input$lang; input$spatial_by
     if (!identical(input$main_tabs, "spatial")) return()
     obj <- spatial_obj(); if (is.null(obj)) return()
@@ -3777,12 +3796,50 @@ server <- function(input, output, session) {
   # Spatial（空間座標プロット）
   # ==========================================================================
   # プロット対象データセット（サイドバーで選択。デフォルトはアクティブ）
+  # このタブ専用に独立読み込みした空間オブジェクト（巨大データ向け）。
+  # セットされていればメインのデータより優先する＝他タブには渡らない。
+  spatial_obj_loaded <- reactiveVal(NULL)
+
   spatial_obj <- reactive({
+    if (!is.null(spatial_obj_loaded())) return(spatial_obj_loaded())
     objs <- loaded_objs()
     ds <- input$spatial_ds
     if (!is.null(ds) && !is.null(objs[[ds]])) return(objs[[ds]])
     seurat_obj()
   })
+
+  # メタデータ列の分類・遺伝子一覧を「オブジェクトごとに1回だけ」計算してキャッシュ。
+  # （巨大データでは sapply(meta, length(unique)) が毎描画で数秒かかるのを防ぐ）
+  spatial_meta_info <- reactive({
+    obj <- spatial_obj(); req(obj)
+    meta <- obj@meta.data
+    cat_cols <- names(meta)[vapply(meta, function(x) {
+      is.factor(x) || is.character(x) || (is.numeric(x) && length(unique(x)) <= 50)
+    }, logical(1))]
+    list(cat_cols = cat_cols, color_choices = names(meta),
+         genes = sort(rownames(obj)), ncell = ncol(obj))
+  })
+
+  # 独立読み込みローダー（Spatial タブ内）
+  observeEvent(input$spatial_load_btn, {
+    req(input$spatial_load_file)
+    withProgress(message = t("spatial_loading"), value = NULL, {
+      tryCatch({
+        o <- readRDS(file.path(app_dir, input$spatial_load_file))
+        if (!inherits(o, "Seurat")) {
+          showNotification(t("spatial_not_seurat"), type = "error"); return()
+        }
+        spatial_obj_loaded(o)
+        showNotification(sprintf(t("spatial_loaded"),
+                                 format(ncol(o), big.mark = ","), length(o@images)),
+                         type = "message", duration = 6)
+      }, error = function(e) {
+        showNotification(paste(t("notify_error"), conditionMessage(e)), type = "error", duration = 12)
+      })
+    })
+  })
+
+  observeEvent(input$spatial_load_clear, { spatial_obj_loaded(NULL) })
 
   output$spatial_ds_ui <- renderUI({
     lang <- input$lang
@@ -3807,17 +3864,41 @@ server <- function(input, output, session) {
 
   output$spatial_panel_ui <- renderUI({
     lang <- input$lang
-    if (!data_loaded()) return(placeholder_ui())
-    xy <- spatial_xy()
-    if (is.null(xy)) {
-      return(div(class = "text-center text-warning py-4", h5(t("spatial_none"))))
+    # 独立読み込みローダー（常に表示）。大規模空間データはここで読むと他タブに渡らない。
+    load_sel <- isolate(input$spatial_load_file) %||%
+      (grep("centroid", rds_files, value = TRUE)[1] %||% rds_files[1])
+    loader_card <- div(class = "card mb-3", div(class = "card-body",
+      h6(t("spatial_load_title"), class = "card-title text-primary"),
+      div(class = "alert alert-secondary py-2 small mb-2", icon("circle-info"), " ", t("spatial_load_hint")),
+      fluidRow(
+        column(8, selectInput("spatial_load_file", t("spatial_load_file"),
+                              choices = rds_files, selected = load_sel)),
+        column(4, div(style = "margin-top: 30px;",
+          actionButton("spatial_load_btn", t("spatial_load_btn"), class = "btn-primary btn-sm",
+                       icon = icon("folder-open")),
+          if (!is.null(spatial_obj_loaded()))
+            actionButton("spatial_load_clear", t("spatial_load_clear"),
+                         class = "btn-outline-secondary btn-sm ms-1")))
+      ),
+      if (!is.null(spatial_obj_loaded()))
+        div(class = "small text-success",
+            sprintf(t("spatial_loaded"), format(ncol(spatial_obj_loaded()), big.mark = ","),
+                    length(spatial_obj_loaded()@images)))
+    ))
+
+    obj <- tryCatch(spatial_obj(), error = function(e) NULL)
+    if (is.null(obj)) {
+      return(tagList(loader_card,
+        div(class = "text-center text-muted py-3", h6(t("placeholder_load")))))
     }
-    obj <- spatial_obj()
+    if (is.null(spatial_xy())) {
+      return(tagList(loader_card,
+        div(class = "text-center text-warning py-3", h6(t("spatial_none")))))
+    }
+    info <- spatial_meta_info()
     meta <- obj@meta.data
-    cat_cols <- names(meta)[sapply(meta, function(x) {
-      is.factor(x) || is.character(x) || (is.numeric(x) && length(unique(x)) <= 50)
-    })]
-    color_choices <- names(meta)   # カテゴリ/数値どちらでも色分け可
+    cat_cols <- info$cat_cols
+    color_choices <- info$color_choices   # カテゴリ/数値どちらでも色分け可
     col_sel <- isolate(input$spatial_color)
     if (is.null(col_sel) || !(col_sel %in% color_choices)) {
       col_sel <- if ("seurat_clusters" %in% color_choices) "seurat_clusters"
@@ -3832,11 +3913,12 @@ server <- function(input, output, session) {
     if (is.null(samp_col_sel) || !(samp_col_sel %in% samp_cands)) {
       samp_col_sel <- if (length(samp_cands) > 1) samp_cands[[2]] else "__none__"
     }
-    genes <- sort(rownames(obj))
+    genes <- info$genes
     gene_sel <- isolate(input$spatial_gene)
     if (is.null(gene_sel) || !(gene_sel %in% genes)) gene_sel <- genes[1]
     by_sel <- isolate(input$spatial_by) %||% "meta"
     tagList(
+      loader_card,
       div(class = "card mb-3", div(class = "card-body",
         h6(t("spatial_settings"), class = "card-title text-primary"),
         radioButtons("spatial_by", t("spatial_by"),
@@ -3949,6 +4031,19 @@ server <- function(input, output, session) {
   # 「描画」ボタン押下時に、その時点の設定をスナップショットして保存。
   spatial_map_spec_v <- reactiveVal(NULL)
   observeEvent(input$spatial_map_run, {
+    # 巨大データでサンプル未選択なら、ボタンを押しても重い描画はせず警告を出す
+    obj <- tryCatch(spatial_obj(), error = function(e) NULL)
+    if (!is.null(obj) && ncol(obj) > 300000L) {
+      sc <- input$spatial_sample_col
+      have <- !is.null(sc) && !identical(sc, "__none__") &&
+              !is.null(input$spatial_sample) && length(input$spatial_sample) > 0
+      if (!have) {
+        showNotification(sprintf(t("spatial_pick_sample"), format(ncol(obj), big.mark = ",")),
+                         type = "warning", duration = 10)
+        return()
+      }
+    }
+    withProgress(message = t("spatial_loading"), value = NULL, {
     spatial_map_spec_v(list(
       pr = spatial_prep(),
       pt_sz = input$spatial_pt %||% 0.8,
@@ -3959,6 +4054,7 @@ server <- function(input, output, session) {
       hl_size = input$spatial_hl_size %||% 1.2,
       other_alpha = input$spatial_other_alpha %||% 0.3,
       other_size = input$spatial_other_size %||% 0.6))
+    })
   }, ignoreInit = TRUE)
   spatial_map_spec <- reactive({ req(spatial_map_spec_v()) })
 
@@ -3968,15 +4064,33 @@ server <- function(input, output, session) {
   })
 
   # 描画用データの準備（点/ポリゴン・plotly/ggplot で共通）
+  # 大規模データ対策: ①先にサンプルで絞り込んでから色を抽出する（全細胞分の
+  # 抽出を避ける）②サンプル未選択の巨大データはガードして描画しない。
   spatial_prep <- reactive({
     obj <- spatial_obj(); req(obj)
-    xy <- spatial_xy(); req(xy)
     meta <- obj@meta.data
+    ncell <- nrow(meta)
     by_gene <- identical(input$spatial_by, "gene")
     if (by_gene) req(input$spatial_gene) else req(input$spatial_color)
+    sc <- input$spatial_sample_col
+    has_samplecol <- !is.null(sc) && !identical(sc, "__none__") && sc %in% names(meta)
+    sample_sel <- input$spatial_sample
+    have_sample <- has_samplecol && !is.null(sample_sel) && length(sample_sel) > 0
+    # 巨大データはサンプルを1つも選ばないと描画が重すぎるためガード
+    if (ncell > 300000L && !have_sample) {
+      validate(need(FALSE, sprintf(t("spatial_pick_sample"), format(ncell, big.mark = ","))))
+    }
+    xy <- spatial_xy(); req(xy)
     df <- xy[xy$cell %in% rownames(meta), , drop = FALSE]
+    facet <- FALSE
+    if (has_samplecol) {
+      df$sample <- as.character(meta[[sc]][match(df$cell, rownames(meta))])
+      if (have_sample) df <- df[df$sample %in% sample_sel, , drop = FALSE]
+      facet <- length(unique(df$sample)) > 1
+    }
+    validate(need(nrow(df) > 0, t("spatial_none")))
+    # 色はサンプル絞り込み後の細胞についてのみ抽出する
     if (by_gene) {
-      # 選択遺伝子の発現量（data レイヤー）で色分け
       g <- input$spatial_gene
       em <- get_expr_matrix(obj, g)
       validate(need(!is.null(em), t("spatial_none")))
@@ -3985,16 +4099,7 @@ server <- function(input, output, session) {
       df <- df[df$cell %in% names(ev), , drop = FALSE]
       df$col <- ev[df$cell]
     } else {
-      df$col <- meta[df$cell, input$spatial_color]
-    }
-    sc <- input$spatial_sample_col
-    facet <- FALSE
-    if (!is.null(sc) && !identical(sc, "__none__") && sc %in% names(meta)) {
-      df$sample <- as.character(meta[df$cell, sc])
-      if (!is.null(input$spatial_sample) && length(input$spatial_sample) > 0) {
-        df <- df[df$sample %in% input$spatial_sample, , drop = FALSE]
-      }
-      facet <- length(unique(df$sample)) > 1
+      df$col <- meta[[input$spatial_color]][match(df$cell, rownames(meta))]
     }
     validate(need(nrow(df) > 0, t("spatial_none")))
     # 遺伝子発現は常に連続値、メタデータは型から判定
