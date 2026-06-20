@@ -854,6 +854,8 @@ i18n <- list(
     punkst_colorby    = "色分け変数",
     punkst_pt         = "点のサイズ",
     punkst_flip       = "Y軸を反転",
+    punkst_highlight  = "強調する topic（色分け変数の値・複数可）",
+    punkst_highlight_ph = "未選択 = 全て通常表示",
     punkst_run        = "描画",
     punkst_placeholder = "ファイルを読み込み、サンプルを選んで「描画」を押してください",
     punkst_pick_sample = "⚠️ 大規模データ(%s 細胞)です。サンプルを1つ選んでから「描画」してください。",
@@ -1216,6 +1218,8 @@ i18n <- list(
     punkst_colorby    = "Color variable",
     punkst_pt         = "Point size",
     punkst_flip       = "Flip Y axis",
+    punkst_highlight  = "Highlight topics (values of the color variable)",
+    punkst_highlight_ph = "none = show all normally",
     punkst_run        = "Draw",
     punkst_placeholder = "Load files, pick a sample, and click 'Draw'",
     punkst_pick_sample = "⚠️ Large dataset (%s cells). Pick one sample, then click Draw.",
@@ -5929,6 +5933,7 @@ server <- function(input, output, session) {
           column(2, div(style = "margin-top: 14px;",
             checkboxInput("punkst_flip", t("punkst_flip"), value = isolate(input$punkst_flip) %||% TRUE)))
         ),
+        uiOutput("punkst_highlight_ui"),
         actionButton("punkst_run", t("punkst_run"), class = "btn-success", icon = icon("play"))
       )),
       h6(class = "text-primary", t("punkst_map_title")),
@@ -6050,7 +6055,19 @@ server <- function(input, output, session) {
                        type = "warning", duration = 10); return()
     }
     punkst_spec(list(sample = input$punkst_sample, colorby = input$punkst_colorby,
-                     pt = input$punkst_pt %||% 0.6, flip = isTRUE(input$punkst_flip)))
+                     pt = input$punkst_pt %||% 0.6, flip = isTRUE(input$punkst_flip),
+                     highlight = input$punkst_highlight))
+  })
+
+  # 強調する topic（= 色分け変数の値）の選択UI。色分け変数に追従。
+  output$punkst_highlight_ui <- renderUI({
+    df <- punkst_df(); req(df)
+    cv <- input$punkst_colorby %||% punkst_var_choices(df)[1]; req(cv %in% names(df))
+    levs <- cluster_level_order(as.character(df[[cv]]))
+    prev <- isolate(input$punkst_highlight); sel <- if (!is.null(prev)) prev[prev %in% levs] else NULL
+    selectizeInput("punkst_highlight", t("punkst_highlight"), choices = levs, selected = sel,
+                   multiple = TRUE, options = list(plugins = list("remove_button"),
+                                                   placeholder = t("punkst_highlight_ph")))
   })
 
   punkst_plot_ggplot <- reactive({
@@ -6072,13 +6089,23 @@ server <- function(input, output, session) {
     d <- data.frame(x = sub$x, y = if (isTRUE(spec$flip)) -sub$y else sub$y,
                     col = factor(val, levels = levs), sample = as.character(sub$sample_id),
                     text = paste0(cv, ": ", val), stringsAsFactors = FALSE)
+    # 指定した topic（= 色分け変数の値）だけ強調。他はグレーで薄く背景表示。
+    hl <- spec$highlight
+    if (length(hl) > 0) {
+      keep <- intersect(levs, as.character(hl))
+      cc <- ifelse(as.character(d$col) %in% keep, as.character(d$col), "·other")
+      d$col <- factor(cc, levels = c(keep, "·other"))
+      pal <- c(pal[keep], setNames("grey88", "·other"))
+      d$.a <- ifelse(cc == "·other", 0.25, 1)
+      d <- d[order(cc != "·other"), ]   # other を先に描き、強調を最前面に
+    } else d$.a <- 1
     multi <- length(unique(d$sample)) > 1
     if (multi) {   # 複数サンプルは各々を原点中心に揃え facet 固定スケール
       ctr <- function(z) z - mean(range(z, na.rm = TRUE))
       d$x <- stats::ave(d$x, d$sample, FUN = ctr); d$y <- stats::ave(d$y, d$sample, FUN = ctr)
     }
     p <- ggplot(d, aes(x = x, y = y, color = col, text = text)) +
-      geom_point(size = spec$pt %||% 0.6) +
+      geom_point(aes(alpha = .a), size = spec$pt %||% 0.6) + scale_alpha_identity() +
       scale_color_manual(values = pal, name = cv, drop = FALSE) +
       coord_equal() +
       labs(title = if (multi) sprintf("%d samples", length(unique(d$sample))) else d$sample[1],
