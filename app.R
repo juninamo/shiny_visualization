@@ -5847,7 +5847,8 @@ server <- function(input, output, session) {
   output$punkst_panel_ui <- renderUI({
     lang <- input$lang
     df <- punkst_df()
-    fac_default <- grep("punkst", rds_files, ignore.case = TRUE, value = TRUE)[1] %||% rds_files[1]
+    fac_default <- grep("punkst.*niche", rds_files, ignore.case = TRUE, value = TRUE)[1] %||%
+                   grep("punkst", rds_files, ignore.case = TRUE, value = TRUE)[1] %||% rds_files[1]
     coord_default <- grep("Merged_ST_fine_cell_type_Baysor_meta", rds_files, value = TRUE)[1] %||%
                      grep("_meta\\.rds$", rds_files, value = TRUE)[1] %||% rds_files[1]
     loader <- div(class = "card mb-3", div(class = "card-body",
