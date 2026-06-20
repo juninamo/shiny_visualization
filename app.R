@@ -884,6 +884,17 @@ i18n <- list(
     punkst_pb_deg_dl  = "DEG表をCSVで保存",
     punkst_pb_help    = "pseudobulk(各topicの合算発現)を列ごとにCPM正規化し、Topic A と B(または他全体)の log2 fold change で遺伝子をランキングします(複製が無いため統計検定ではなく fold change ベース)。下の GSEA はこのランキングで fgsea を実行します。",
     punkst_pb_genes   = "遺伝子",
+    # 期待するデータ構造の説明（各読み込み箇所）
+    struct_main       = "期待する構造: Seurat オブジェクト(.rds)。UMAP reduction・メタデータ(クラスター/サンプル等)・発現データ(counts/data)を含むと全タブが利用できます。",
+    struct_spatial    = "期待する構造: x/y 座標を meta.data(x/y, x_centroid 等)または @images(FOV)に持つ Seurat オブジェクト。サンプル列があると切片ごとに描画できます。巨大データもこのタブだけに読み込みます。",
+    struct_niche_tile = "期待する構造: data.frame で、各タイルの sf ポリゴン列(shape または geometry / sfc)・id・sample_id・niche クラスター列(seurat_clusters)を含む(tessera の tile_meta)。",
+    struct_niche_cell = "期待する構造: 細胞ごとの行を持つ data.frame で、tile_id(無ければ同じ細胞を含む clusters_meta から自動補完)と細胞型列(ct 等)を含む。Seurat オブジェクトも可(meta.data を使用)。",
+    struct_pk_factor  = "期待する構造: 細胞ごとの行(行名=細胞ID)を持つ data.frame で、top_factor・sample_id・アノテーション列(anno_clusters 等)を含む。niche 列があれば topic×niche がすぐ使える。座標は不要。Seurat も可。",
+    struct_pk_coord   = "期待する構造: x/y 座標(x/y, x_centroid/y_centroid 等)を持つ data.frame / Seurat。行名または cell_id が factor ファイルと一致すること(座標と細胞種列を結合)。",
+    struct_pk_niche   = "期待する構造: niche タイルファイル(tile_meta: id と seurat_clusters)。cell→tile_id は clusters_meta から自動照合。※factor ファイルに niche 列があれば空欄でOK。",
+    struct_pk_color   = "期待する形式: tsv/csv。各 factor の色。hex色の列(Color_hex 等)と factor 名の列(Name)を含む(Punkst の *_color.rgb.tsv 等)。",
+    struct_pk_info    = "期待する形式: tsv/csv の factor 情報表(*.report.factor.info.tsv / *.de.tsv 等)。そのまま検索可能な表として表示します。",
+    struct_pk_pb      = "期待する形式: 1列目=遺伝子(Feature)、残りの列=各 topic の pseudobulk 発現(genes × topics)の tsv/csv(Punkst の *.pseudobulk.tsv)。",
 
     # プレースホルダ
     placeholder_load  = "\U0001F4C2 RDSファイルを選択して「読み込む」ボタンを押してください",
@@ -1235,6 +1246,17 @@ i18n <- list(
     punkst_pb_deg_dl  = "Download DEG CSV",
     punkst_pb_help    = "CPM-normalizes each topic column of the pseudobulk and ranks genes by log2 fold change of Topic A vs B (or all others). With no replicates this is fold-change-based, not a statistical test. The GSEA below runs fgsea on this ranking.",
     punkst_pb_genes   = "Genes",
+    # Expected data structure (per loader)
+    struct_main       = "Expected: a Seurat object (.rds). With a UMAP reduction, metadata (clusters/sample/...) and expression (counts/data) all tabs are available.",
+    struct_spatial    = "Expected: a Seurat object whose x/y coordinates are in meta.data (x/y, x_centroid, ...) or in @images (FOVs). A sample column lets you draw per tissue section. Large objects load into this tab only.",
+    struct_niche_tile = "Expected: a data.frame with one sf polygon per tile (column shape or geometry / sfc), plus id, sample_id and a niche-cluster column (seurat_clusters) — i.e. a tessera tile_meta.",
+    struct_niche_cell = "Expected: a per-cell data.frame with tile_id (auto-recovered from a sibling clusters_meta if absent) and a cell-type column (ct, ...). A Seurat object also works (its meta.data is used).",
+    struct_pk_factor  = "Expected: a per-cell data.frame (rownames = cell IDs) with top_factor, sample_id and annotation columns (anno_clusters, ...). A niche column makes topic x niche instant. No coordinates needed. Seurat also works.",
+    struct_pk_coord   = "Expected: a data.frame / Seurat with x/y coordinates (x/y, x_centroid/y_centroid, ...) whose rownames or cell_id match the factor file (used to join x/y and cell-type columns).",
+    struct_pk_niche   = "Expected: a niche tile file (tile_meta: id + seurat_clusters). cell -> tile_id is matched from a clusters_meta. Leave empty if the factor file already has a niche column.",
+    struct_pk_color   = "Expected: tsv/csv with one row per factor, a hex-color column (Color_hex, ...) and a factor-name column (Name) — e.g. Punkst's *_color.rgb.tsv.",
+    struct_pk_info    = "Expected: a tsv/csv factor-info table (*.report.factor.info.tsv / *.de.tsv) — shown as a searchable table as-is.",
+    struct_pk_pb      = "Expected: tsv/csv with the first column = gene (Feature) and the remaining columns = each topic's pseudobulk (genes x topics) — Punkst's *.pseudobulk.tsv.",
 
     # Placeholders
     placeholder_load  = "\U0001F4C2 Select an RDS file and click 'Load'",
@@ -1514,6 +1536,7 @@ server <- function(input, output, session) {
         selected = rds_files[1],
         multiple = TRUE
       ),
+      div(class = "small text-muted mb-2", icon("circle-info"), " ", t("struct_main")),
       actionButton(
         "load_btn", t("load_btn"),
         class = "btn-primary w-100 mb-3",
@@ -4254,6 +4277,7 @@ server <- function(input, output, session) {
             actionButton("spatial_load_clear", t("spatial_load_clear"),
                          class = "btn-outline-secondary btn-sm ms-1")))
       ),
+      div(class = "small text-muted mb-1", icon("circle-info"), " ", t("struct_spatial")),
       if (!is.null(spatial_obj_loaded()))
         div(class = "small text-success",
             sprintf(t("spatial_loaded"), format(ncol(spatial_obj_loaded()), big.mark = ","),
@@ -5363,12 +5387,15 @@ server <- function(input, output, session) {
       div(class = "card mb-3", div(class = "card-body",
         h6(t("niche_settings"), class = "card-title text-primary"),
         fluidRow(
-          column(5, selectInput("niche_tile_path", t("niche_tile_file"),
-                                choices = rds_files,
-                                selected = isolate(input$niche_tile_path) %||% tile_default)),
-          column(5, selectInput("niche_cl_path", t("niche_cl_file"),
-                                choices = c(setNames("", "—"), setNames(rds_files, rds_files)),
-                                selected = isolate(input$niche_cl_path) %||% cells_default)),
+          column(5,
+            selectInput("niche_tile_path", t("niche_tile_file"), choices = rds_files,
+                        selected = isolate(input$niche_tile_path) %||% tile_default),
+            div(class = "small text-muted mb-1", icon("circle-info"), " ", t("struct_niche_tile"))),
+          column(5,
+            selectInput("niche_cl_path", t("niche_cl_file"),
+                        choices = c(setNames("", "—"), setNames(rds_files, rds_files)),
+                        selected = isolate(input$niche_cl_path) %||% cells_default),
+            div(class = "small text-muted mb-1", icon("circle-info"), " ", t("struct_niche_cell"))),
           column(2, div(style = "margin-top: 30px;",
             actionButton("niche_load", t("niche_load"), class = "btn-primary btn-sm",
                          icon = icon("folder-open"))))
@@ -5855,21 +5882,31 @@ server <- function(input, output, session) {
       h6(t("punkst_settings"), class = "card-title text-primary"),
       div(class = "alert alert-secondary py-2 small mb-2", icon("circle-info"), " ", t("punkst_help")),
       fluidRow(
-        column(6, selectInput("punkst_factor_path", t("punkst_factor_file"), choices = rds_files,
-                              selected = isolate(input$punkst_factor_path) %||% fac_default)),
-        column(4, selectInput("punkst_coord_path", t("punkst_coord_file"), choices = rds_files,
-                              selected = isolate(input$punkst_coord_path) %||% coord_default)),
+        column(6,
+          selectInput("punkst_factor_path", t("punkst_factor_file"), choices = rds_files,
+                      selected = isolate(input$punkst_factor_path) %||% fac_default),
+          div(class = "small text-muted mb-1", icon("circle-info"), " ", t("struct_pk_factor"))),
+        column(4,
+          selectInput("punkst_coord_path", t("punkst_coord_file"), choices = rds_files,
+                      selected = isolate(input$punkst_coord_path) %||% coord_default),
+          div(class = "small text-muted mb-1", icon("circle-info"), " ", t("struct_pk_coord"))),
         column(2, div(style = "margin-top: 30px;",
           actionButton("punkst_load", t("punkst_load"), class = "btn-primary btn-sm", icon = icon("folder-open"))))
       ),
       fluidRow(
-        column(6, selectInput("punkst_niche_path", t("punkst_niche_file"),
-                              choices = c(setNames("", "—"), setNames(rds_files, rds_files)),
-                              selected = isolate(input$punkst_niche_path) %||% ""))
+        column(6,
+          selectInput("punkst_niche_path", t("punkst_niche_file"),
+                      choices = c(setNames("", "—"), setNames(rds_files, rds_files)),
+                      selected = isolate(input$punkst_niche_path) %||% ""),
+          div(class = "small text-muted mb-1", icon("circle-info"), " ", t("struct_pk_niche")))
       ),
       fluidRow(
-        column(6, fileInput("punkst_color_file", t("punkst_color_up"), accept = c(".tsv", ".txt", ".csv"))),
-        column(6, fileInput("punkst_info_file", t("punkst_info_up"), accept = c(".tsv", ".txt", ".csv")))
+        column(6,
+          fileInput("punkst_color_file", t("punkst_color_up"), accept = c(".tsv", ".txt", ".csv")),
+          div(class = "small text-muted mb-1", icon("circle-info"), " ", t("struct_pk_color"))),
+        column(6,
+          fileInput("punkst_info_file", t("punkst_info_up"), accept = c(".tsv", ".txt", ".csv")),
+          div(class = "small text-muted mb-1", icon("circle-info"), " ", t("struct_pk_info")))
       ),
       uiOutput("punkst_load_status")
     ))
@@ -5930,6 +5967,7 @@ server <- function(input, output, session) {
          bslib::tooltip(tags$span(icon("circle-question"), style = "cursor: help;"),
                         t("punkst_pb_help"), placement = "right")),
       fileInput("punkst_pb_file", t("punkst_pb_up"), accept = c(".tsv", ".txt", ".csv")),
+      div(class = "small text-muted mb-2", icon("circle-info"), " ", t("struct_pk_pb")),
       uiOutput("punkst_pb_ui")
     )
   })
